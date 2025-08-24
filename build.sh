@@ -4,7 +4,7 @@ rm -rf target/uber
 mkdir -p target/uber/classes target/uber/stage
 
 # 1) Compile thin classes against deps
-javac -source 1.8 -target 1.8 -cp "deps/*" -d target/uber/classes ExcelTool.java
+javac -source 1.8 -target 1.8 -cp "deps/*" -d target/uber/classes src/main/java/app/ExcelTool.java
 
 # 2) Thin jar
 jar cfe target/uber/app-thin.jar app.ExcelTool -C target/uber/classes .

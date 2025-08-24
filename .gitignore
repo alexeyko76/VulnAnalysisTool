@@ -1,6 +1,35 @@
-.idea/
-*.iml
+# Build outputs
+*.jar
+!deps/*.jar
 target/
-*.log
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS files
 .DS_Store
-deps/*.jar
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+*~
+
+# Java
+*.class
+*.log
+
+# Maven (if used)
+.mvn/
+mvnw
+mvnw.cmd
+
+# Temporary files
+temp/
+tmp/
+
+# Dependencies (keep the JARs in deps/ as they are required)
+# Note: deps/*.jar are required dependencies, not build outputs
