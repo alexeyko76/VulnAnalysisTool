@@ -1,12 +1,15 @@
-# Java Utility Specification
+# Java Vulnerability Analysis Tool
 
-The utility will process an Excel file based on configurable parameters.  
-It must be implemented in **one Java file** and fully compatible with **Java 1.8**.  
+A defensive security tool that processes Excel files to analyze file existence, modification dates, and JAR versions across different platforms. Supports both local file analysis and remote Windows file access via UNC paths.
 
-## Configuration (config file)
-- Excel file path  
-- Sheet name to process
-- Column names: `PlatformName`, `FilePath`, `HostName`  
+**Implementation**: Single Java file, fully compatible with **Java 1.8**.  
+
+## Configuration (config.properties)
+- `excel.path` - Excel file path  
+- `sheet.name` - Sheet name to process
+- Column names: `PlatformName`, `FilePath`, `HostName`
+- `platform.windows` - Windows platform identifier (e.g., "Windows_2019")
+- `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)  
 
 ## Processing Steps
 1. Open the Excel file.  
@@ -23,7 +26,9 @@ It must be implemented in **one Java file** and fully compatible with **Java 1.8
 2. Read the Excel file row by row.  
 
 3. For each row:  
-   - Process only if the system's current host name matches the value in the `HostName` column.  
+   - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
+   - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
+   - **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list for the current run.
    - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
    - Check if the file in the `FilePath` column exists.  
      - If the file exists:  
@@ -32,7 +37,7 @@ It must be implemented in **one Java file** and fully compatible with **Java 1.8
        - If the file has a `.jar` extension:  
          - Open it as a ZIP archive.  
          - If it contains `META-INF/MANIFEST.MF`:  
-           - Read the file.  
+           - **Robust Parsing**: Uses both Manifest API and manual text parsing as fallback.
            - Extract the value from the line starting with `Implementation-Version:`.  
            - Write this value into the `JarVersion` column.
          - If any JAR processing errors occur, record them in the `ScanError` column.
@@ -40,7 +45,7 @@ It must be implemented in **one Java file** and fully compatible with **Java 1.8
        - Write `"N"` into the `FileExists` column.  
        - Write `"File does not exist"` into the `ScanError` column.
        - Leave `FileModificationDate` and `JarVersion` blank.
-   - If any other scanning errors occur (e.g., permission issues, corrupted files), record them in the `ScanError` column.  
+   - If any other scanning errors occur (e.g., permission issues, corrupted files, UNC access failures), record them in the `ScanError` column.  
 
 4. Save the updated Excel file after all rows are processed.  
 
@@ -56,6 +61,25 @@ It must be implemented in **one Java file** and fully compatible with **Java 1.8
 - Must be implemented in **a single Java file**.  
 
 ## Build & Dependencies
-- All required dependencies (e.g., Apache POI) must be placed inside the `deps/` folder.  
-- The utility must be compiled into a **single executable JAR file** containing all dependencies (fat/uber jar).  
-- Running the tool should not require external classpath setup beyond the generated JAR.  
+
+### Build Options
+1. **Maven Build** (Recommended):
+   - Dependencies managed automatically via `pom.xml`
+   - Windows: `maven-build.bat`
+   - Creates: `java-excel-tool-uber.jar`
+
+2. **Manual Build**:
+   - Dependencies stored in `deps/` folder
+   - Windows: `build.bat`
+   - Linux/macOS: `./build.sh`
+
+### Running the Tool
+```bash
+java -jar java-excel-tool-uber.jar config.properties
+```
+
+Windows batch scripts:
+- `maven-run.bat` (Maven-based)  
+- `run.bat` (Manual build)
+
+**Output**: Single executable uber JAR with all dependencies included.  
