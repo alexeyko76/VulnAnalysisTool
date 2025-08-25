@@ -6,14 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a single-file Java 8 vulnerability analysis tool that processes Excel files to check file existence and extract metadata across different platforms. The tool is implemented in `ExcelTool.java` and uses Apache POI for Excel processing.
 
-**Purpose**: Check file existence, modification dates, and JAR versions across different platforms based on hostname matching in Excel spreadsheets.
+**Purpose**: Check file existence, modification dates, and JAR versions across different platforms based on hostname matching in Excel spreadsheets. Supports both local file access and remote Windows file access via UNC paths.
 
 ## Architecture
 
 - **Single Java File**: All logic in `src/main/java/app/ExcelTool.java` (Java 1.8 compatible)
-- **Configuration-Driven**: Uses `config.properties` for Excel file path and column mappings
+- **Configuration-Driven**: Uses `config.properties` for Excel file path, column mappings, and feature settings
 - **Cross-Platform**: Handles both Windows and Linux path formats
-- **Hostname Filtering**: Only processes rows matching the current system hostname
+- **Flexible Host Processing**: Processes local host files and optionally remote Windows files via UNC
+- **Smart Exclusion**: Maintains exclusion list for inaccessible remote hosts during execution
 - **Excel I/O**: Uses Apache POI via WorkbookFactory (supports both .xlsx and .xls)
 
 ## Key Components
@@ -30,7 +31,14 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### JAR Analysis (src/main/java/app/ExcelTool.java:316-346)
 - Extracts Implementation-Version from META-INF/MANIFEST.MF
 - Only processes files with `.jar` extension
+- **Robust Parsing**: Uses both Manifest API and manual text parsing as fallback
 - Enhanced error reporting captures JAR processing issues in ScanError column
+
+### Remote Windows Access (UNC Support)
+- **UNC Path Conversion**: Converts `C:\path\file.jar` to `\\hostname\C$\path\file.jar`
+- **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list
+- **Configurable**: Can be enabled/disabled via `remote.unc.enabled` setting
+- **Error Handling**: Captures UNC access failures in ScanError column
 
 ### Error Handling (src/main/java/app/ExcelTool.java:ScanError column)
 - **ScanError column**: Automatically created to track scanning issues
@@ -39,6 +47,8 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
   - File access permissions errors
   - JAR processing failures (missing MANIFEST.MF, corrupted files)
   - File modification date read errors
+  - UNC access failures for remote Windows hosts
+  - Invalid path format for UNC conversion
 - **Error aggregation**: Multiple errors for same file are combined with `;` separator
 
 ## Build and Development Commands
@@ -46,7 +56,8 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Build Options
 
 1. **Build uber JAR (recommended)**:
-   - Windows: `build.bat` ✅ (fixed - now properly includes all dependencies)
+   - Windows: `build.bat` ✅ (manual dependency extraction)
+   - Maven: `maven-build.bat` ✅ (Maven-based with automatic dependency resolution)
    - Linux/macOS: `./build.sh`
    - Output: `java-excel-tool-uber.jar`
 
@@ -57,6 +68,7 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
    Or on Windows:
    ```cmd
    run.bat
+   maven-run.bat
    ```
 
 ### Configuration
@@ -65,12 +77,18 @@ Edit `config.properties` to set:
 - `excel.path`: Path to Excel file
 - `sheet.name`: Name of Excel sheet to process
 - Column names for PlatformName, FilePath, HostName
+- `platform.windows`: Windows platform value (e.g., "Windows_2019")
+- `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
 
 ### Dependencies
 
-Dependencies are stored in `deps/` folder:
+Dependencies are managed through:
+- **Manual**: Dependencies stored in `deps/` folder
+- **Maven**: Configured in `pom.xml` with automatic resolution
+
+Key dependencies:
 - Apache POI 5.4.1 (poi-*.jar)
-- Commons libraries for compression and utilities
+- Commons libraries for compression and utilities  
 - XMLBeans for XML processing
 
 ## Exit Codes
@@ -92,3 +110,5 @@ Dependencies are stored in `deps/` folder:
 - **Cross-Platform**: Handles different path separators and hostname detection methods
 - **Date Format**: Human-readable timestamps (`yyyy-MM-dd HH:mm:ss`) instead of ISO format
 - **Resource Management**: Proper try-with-resources to prevent memory leaks
+- **Remote Access**: Smart UNC path handling with exclusion lists for performance
+- **Flexible Configuration**: Boolean settings with sensible defaults

@@ -2,7 +2,6 @@ package app;
 
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.usermodel.CellType;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import java.io.*;
 import java.net.InetAddress;
@@ -37,6 +36,8 @@ public class ExcelTool {
     private static final String KEY_COL_PLATFORM = "column.PlatformName";
     private static final String KEY_COL_FILEPATH = "column.FilePath";
     private static final String KEY_COL_HOSTNAME = "column.HostName";
+    private static final String KEY_PLATFORM_WINDOWS = "platform.windows";
+    private static final String KEY_REMOTE_UNC_ENABLED = "remote.unc.enabled";
 
     // Additional columns to ensure exist
     private static final String COL_FILE_EXISTS = "FileExists";
@@ -57,9 +58,13 @@ public class ExcelTool {
             String colPlatform = require(cfg, KEY_COL_PLATFORM);
             String colFilePath = require(cfg, KEY_COL_FILEPATH);
             String colHostName = require(cfg, KEY_COL_HOSTNAME);
+            String windowsPlatformValue = require(cfg, KEY_PLATFORM_WINDOWS);
+            boolean remoteUncEnabled = getBoolean(cfg, KEY_REMOTE_UNC_ENABLED, true);
 
             String localHost = getLocalHostName();
             System.out.println("Local hostname: " + localHost);
+            System.out.println("Windows platform value: " + windowsPlatformValue);
+            System.out.println("Remote UNC access enabled: " + remoteUncEnabled);
 
             File excelFile = new File(excelPath);
             if (!excelFile.exists()) {
@@ -117,14 +122,30 @@ public class ExcelTool {
 
                 int processed = 0;
                 int skippedHost = 0;
+                int skippedRemote = 0;
+                
+                // Exclusion list for hosts that cannot be accessed via UNC from current machine
+                Set<String> inaccessibleHosts = new HashSet<String>();
 
                 for (int r = 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
                     if (row == null) continue;
 
                     String targetHost = getStringCell(row, idxHostName);
-                    if (isBlank(targetHost) || !targetHost.trim().equalsIgnoreCase(localHost)) {
+                    String targetPlatform = getStringCell(row, idxPlatform);
+                    boolean isLocalHost = !isBlank(targetHost) && targetHost.trim().equalsIgnoreCase(localHost);
+                    boolean isWindowsPlatform = !isBlank(targetPlatform) && targetPlatform.trim().equalsIgnoreCase(windowsPlatformValue);
+                    boolean isRemoteWindows = remoteUncEnabled && isWindowsPlatform && !isLocalHost && !isBlank(targetHost);
+                    
+                    // Skip if not local host and (UNC disabled or not a Windows platform for remote access)
+                    if (!isLocalHost && !isRemoteWindows) {
                         skippedHost++;
+                        continue;
+                    }
+                    
+                    // Skip if remote host is in exclusion list
+                    if (isRemoteWindows && inaccessibleHosts.contains(targetHost.trim().toLowerCase())) {
+                        skippedRemote++;
                         continue;
                     }
 
@@ -138,8 +159,42 @@ public class ExcelTool {
                         continue;
                     }
 
-                    Path resolved = resolvePathCrossPlatform(rawPath);
-                    boolean exists = Files.exists(resolved);
+                    Path resolved;
+                    boolean exists = false;
+                    
+                    if (isRemoteWindows) {
+                        // Try UNC path for remote Windows host
+                        String uncPath = convertToUncPath(targetHost.trim(), rawPath);
+                        if (uncPath != null) {
+                            resolved = Paths.get(uncPath);
+                            try {
+                                exists = Files.exists(resolved);
+                            } catch (Exception e) {
+                                // UNC access failed - add host to exclusion list
+                                inaccessibleHosts.add(targetHost.trim().toLowerCase());
+                                writeCell(row, idxFileExists, "N");
+                                writeCell(row, idxFileMod, "");
+                                writeCell(row, idxJarVersion, "");
+                                writeCell(row, idxScanError, "Cannot access remote host via UNC: " + e.getMessage());
+                                processed++;
+                                System.out.println("Added " + targetHost.trim() + " to exclusion list - UNC access failed");
+                                continue;
+                            }
+                        } else {
+                            // Invalid path format for UNC conversion
+                            resolved = resolvePathCrossPlatform(rawPath);
+                            writeCell(row, idxFileExists, "N");
+                            writeCell(row, idxFileMod, "");
+                            writeCell(row, idxJarVersion, "");
+                            writeCell(row, idxScanError, "Invalid path format for UNC conversion");
+                            processed++;
+                            continue;
+                        }
+                    } else {
+                        // Local host - use normal path resolution
+                        resolved = resolvePathCrossPlatform(rawPath);
+                        exists = Files.exists(resolved);
+                    }
                     writeCell(row, idxFileExists, exists ? "Y" : "N");
 
                     if (exists) {
@@ -181,7 +236,7 @@ public class ExcelTool {
                 try (FileOutputStream fos = new FileOutputStream(excelFile)) {
                     wb.write(fos);
                 }
-                System.out.println("Done. Rows processed: " + processed + ", skipped (hostname mismatch): " + skippedHost);
+                System.out.println("Done. Rows processed: " + processed + ", skipped (hostname mismatch): " + skippedHost + ", skipped (remote inaccessible): " + skippedRemote);
             }
         } catch (java.io.IOException e) {
             System.err.println("ERROR: IO failure: " + e.getMessage());
@@ -218,6 +273,14 @@ public class ExcelTool {
             throw new IllegalArgumentException("Missing config property: " + key);
         }
         return v.trim();
+    }
+
+    private static boolean getBoolean(Properties p, String key, boolean defaultValue) {
+        String v = p.getProperty(key);
+        if (v == null || v.trim().isEmpty()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(v.trim());
     }
 
     private static Map<String, Integer> mapHeaderIndices(Row header) {
@@ -291,6 +354,32 @@ public class ExcelTool {
         return Paths.get(normalized).normalize();
     }
 
+    private static String convertToUncPath(String hostname, String localPath) {
+        if (isBlank(hostname) || isBlank(localPath)) {
+            return null;
+        }
+        
+        String trimmedPath = localPath.trim();
+        
+        // Handle Windows drive paths like C:\path or C:/path
+        if (trimmedPath.length() >= 2 && trimmedPath.charAt(1) == ':') {
+            char driveLetter = trimmedPath.charAt(0);
+            String restOfPath = trimmedPath.length() > 2 ? trimmedPath.substring(2) : "";
+            
+            // Convert to UNC format: \\hostname\drive$\rest_of_path
+            String uncPath = "\\\\" + hostname + "\\" + driveLetter + "$" + restOfPath.replace('/', '\\');
+            return uncPath;
+        }
+        
+        // Handle UNC paths that are already in UNC format - just return as is
+        if (trimmedPath.startsWith("\\\\")) {
+            return trimmedPath;
+        }
+        
+        // Cannot convert other path formats
+        return null;
+    }
+
     
     private static class JarResult {
         String version;
@@ -321,7 +410,13 @@ public class ExcelTool {
                 if (v != null) {
                     return new JarResult(v.trim(), null);
                 } else {
-                    return new JarResult(null, "No Implementation-Version in MANIFEST.MF");
+                    // Fallback: manually parse MANIFEST.MF for Implementation-Version
+                    String manualVersion = parseManifestManually(zip, entry);
+                    if (manualVersion != null) {
+                        return new JarResult(manualVersion, null);
+                    } else {
+                        return new JarResult(null, "No Implementation-Version in MANIFEST.MF");
+                    }
                 }
             }
         } catch (IOException e) {
@@ -332,5 +427,47 @@ public class ExcelTool {
                 try { zip.close(); } catch (IOException ignored) {}
             }
         }
+    }
+    
+    private static String parseManifestManually(ZipFile zip, ZipEntry entry) {
+        try (InputStream is = zip.getInputStream(entry);
+             BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+            
+            String line;
+            StringBuilder continuation = new StringBuilder();
+            
+            while ((line = reader.readLine()) != null) {
+                // Handle line continuation (lines starting with space)
+                if (line.startsWith(" ") || line.startsWith("\t")) {
+                    continuation.append(line.substring(1));
+                    continue;
+                }
+                
+                // Process the complete line (previous + current)
+                String completeLine = continuation.toString();
+                continuation.setLength(0);
+                continuation.append(line);
+                
+                if (completeLine.startsWith("Implementation-Version:")) {
+                    String version = completeLine.substring("Implementation-Version:".length()).trim();
+                    if (!version.isEmpty()) {
+                        return version;
+                    }
+                }
+            }
+            
+            // Check the last line
+            String lastLine = continuation.toString();
+            if (lastLine.startsWith("Implementation-Version:")) {
+                String version = lastLine.substring("Implementation-Version:".length()).trim();
+                if (!version.isEmpty()) {
+                    return version;
+                }
+            }
+            
+        } catch (IOException e) {
+            System.err.println("WARN: Failed to manually parse manifest: " + e.getMessage());
+        }
+        return null;
     }
 }
