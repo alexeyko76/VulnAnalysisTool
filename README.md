@@ -9,7 +9,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - `sheet.name` - Sheet name to process
 - Column names: `PlatformName`, `FilePath`, `HostName`
 - `platform.windows` - Windows platform identifier (e.g., "Windows_2019")
-- `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)  
+- `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
+- `progress.display` - Progress display mode: "bar" (in-place progress bar) or "verbose" (timestamped row-by-row logging)  
 
 ## Processing Steps
 1. Open the Excel file.  
@@ -29,6 +30,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
    - **Smart Exclusion**: Hosts that fail UNC access (network errors or permission issues) are added to exclusion list for the current run.
+   - **UNC Access Preservation**: When UNC access fails, only the `ScanError` column is updated - existing values in `FileExists`, `FileModificationDate`, and `JarVersion` are preserved.
    - **File Type Validation**: Only processes regular files, excludes directories and special files.
    - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
    - Check if the file in the `FilePath` column exists.  
@@ -58,11 +60,14 @@ A defensive security tool that processes Excel files to analyze file existence, 
 
 4. Save the updated Excel file after all rows are processed.
 
-5. **Console Reporting**: Provides comprehensive execution summary including:
-   - Total rows processed
-   - Rows skipped due to hostname mismatch  
-   - Rows skipped due to inaccessible remote hosts
-   - Complete list of inaccessible hosts identified during the run  
+5. **Progress Display & Console Reporting**: 
+   - **Progress Bar Mode** (`progress.display=bar`): Shows in-place updating progress bar with current file being processed
+   - **Verbose Mode** (`progress.display=verbose`): Displays timestamped row-by-row logging with detailed messages
+   - **Final Summary**: Comprehensive execution summary including:
+     - Total rows processed
+     - Rows skipped due to hostname mismatch  
+     - Rows skipped due to inaccessible remote hosts
+     - Complete list of inaccessible hosts identified during the run  
 
 ## Recommended Libraries
 - **Apache POI** – for reading and writing Excel files.  

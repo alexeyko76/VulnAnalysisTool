@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a single-file Java 8 vulnerability analysis tool that processes Excel files to check file existence and extract metadata across different platforms. The tool is implemented in `ExcelTool.java` and uses Apache POI for Excel processing.
 
-**Purpose**: Check file existence, modification dates, and JAR versions across different platforms based on hostname matching in Excel spreadsheets. Supports both local file access and remote Windows file access via UNC paths.
+**Purpose**: Check file existence, modification dates, and JAR versions across different platforms based on hostname matching in Excel spreadsheets. Supports both local file access and remote Windows file access via UNC paths with configurable progress display modes.
 
 ## Architecture
 
 - **Single Java File**: All logic in `src/main/java/app/ExcelTool.java` (Java 1.8 compatible)
-- **Configuration-Driven**: Uses `config.properties` for Excel file path, column mappings, and feature settings
+- **Configuration-Driven**: Uses `config.properties` for Excel file path, column mappings, feature settings, and progress display mode
 - **Cross-Platform**: Handles both Windows and Linux path formats
 - **Flexible Host Processing**: Processes local host files and optionally remote Windows files via UNC
 - **Smart Exclusion**: Maintains exclusion list for inaccessible remote hosts during execution
@@ -37,9 +37,16 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Remote Windows Access (UNC Support)
 - **UNC Path Conversion**: Converts `C:\path\file.jar` to `\\hostname\C$\path\file.jar`
 - **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list (both exception-based and permission-based failures)
+- **Data Preservation**: UNC access failures only update `ScanError` column, preserving existing data in other columns
 - **Configurable**: Can be enabled/disabled via `remote.unc.enabled` setting
 - **Error Handling**: Captures UNC access failures in ScanError column
 - **Console Reporting**: Reports inaccessible hosts in real-time and final summary
+
+### Progress Display System
+- **Progress Bar Mode** (`progress.display=bar`): In-place updating progress bar with current file display, verbose messages suppressed for clean display
+- **Verbose Mode** (`progress.display=verbose`): Timestamped row-by-row logging with detailed messages and UNC access notifications  
+- **Real-time Updates**: Shows current processing status and file being analyzed
+- **Clean Output**: Proper handling of console display modes to prevent text overlap
 
 ### Error Handling (src/main/java/app/ExcelTool.java:ScanError column)
 - **ScanError column**: Automatically created to track scanning issues
@@ -84,6 +91,7 @@ Edit `config.properties` to set:
 - Column names for PlatformName, FilePath, HostName
 - `platform.windows`: Windows platform value (e.g., "Windows_2019")
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
+- `progress.display`: Progress display mode - "bar" (in-place progress bar) or "verbose" (timestamped detailed logging)
 
 ### Dependencies
 
@@ -121,3 +129,6 @@ Key dependencies:
 - **File Type Validation**: Uses Files.isRegularFile() to exclude directories and special files
 - **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks
 - **Comprehensive Reporting**: Real-time and summary reporting of inaccessible hosts
+- **Progress Display Flexibility**: Configurable progress display modes (bar vs verbose) for different use cases
+- **Data Preservation**: UNC access failures preserve existing column data while recording errors
+- **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
