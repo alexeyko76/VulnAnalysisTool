@@ -169,6 +169,19 @@ public class ExcelTool {
                             resolved = Paths.get(uncPath);
                             try {
                                 exists = Files.exists(resolved);
+                                // For UNC paths, also check if we can determine file existence
+                                if (!exists) {
+                                    boolean notExists = Files.notExists(resolved);
+                                    if (!notExists) {
+                                        // Neither exists() nor notExists() returned true for UNC path
+                                        writeCell(row, idxFileExists, "N");
+                                        writeCell(row, idxFileMod, "");
+                                        writeCell(row, idxJarVersion, "");
+                                        writeCell(row, idxScanError, "UNC access denied - cannot determine file existence");
+                                        processed++;
+                                        continue;
+                                    }
+                                }
                             } catch (Exception e) {
                                 // UNC access failed - add host to exclusion list
                                 inaccessibleHosts.add(targetHost.trim().toLowerCase());
@@ -195,6 +208,35 @@ public class ExcelTool {
                         resolved = resolvePathCrossPlatform(rawPath);
                         exists = Files.exists(resolved);
                     }
+                    
+                    // Check for access permission issues using both exists() and notExists()
+                    if (!exists) {
+                        boolean notExists = Files.notExists(resolved);
+                        if (!notExists) {
+                            // Neither exists() nor notExists() returned true - likely access denied
+                            // Add remote host to exclusion list to avoid repeated attempts
+                            if (isRemoteWindows) {
+                                inaccessibleHosts.add(targetHost.trim().toLowerCase());
+                                System.out.println("Added " + targetHost.trim() + " to exclusion list - access denied detected");
+                                writeCell(row, idxScanError, "UNC access denied - cannot determine file existence");
+                            } else {
+                                writeCell(row, idxScanError, "Access denied - cannot determine file existence");
+                            }
+                            writeCell(row, idxFileExists, "N");
+                            writeCell(row, idxFileMod, "");
+                            writeCell(row, idxJarVersion, "");
+                            processed++;
+                            continue;
+                        }
+                    }
+                    
+                    // Check if it's a regular file (not a directory) - if not, treat as not found
+                    String notRegularFileError = null;
+                    if (exists && !Files.isRegularFile(resolved)) {
+                        exists = false; // Treat non-regular files as not found
+                        notRegularFileError = "Path exists but is not a regular file (directory or special file)";
+                    }
+                    
                     writeCell(row, idxFileExists, exists ? "Y" : "N");
 
                     if (exists) {
@@ -226,7 +268,8 @@ public class ExcelTool {
                     } else {
                         writeCell(row, idxFileMod, "");
                         writeCell(row, idxJarVersion, "");
-                        writeCell(row, idxScanError, "File does not exist");
+                        // Use specific error message for non-regular files, otherwise default message
+                        writeCell(row, idxScanError, notRegularFileError != null ? notRegularFileError : "File does not exist");
                     }
 
                     processed++;
@@ -237,6 +280,9 @@ public class ExcelTool {
                     wb.write(fos);
                 }
                 System.out.println("Done. Rows processed: " + processed + ", skipped (hostname mismatch): " + skippedHost + ", skipped (remote inaccessible): " + skippedRemote);
+                if (!inaccessibleHosts.isEmpty()) {
+                    System.out.println("Inaccessible hosts identified during this run: " + inaccessibleHosts);
+                }
             }
         } catch (java.io.IOException e) {
             System.err.println("ERROR: IO failure: " + e.getMessage());

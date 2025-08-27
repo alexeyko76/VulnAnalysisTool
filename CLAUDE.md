@@ -36,19 +36,22 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 
 ### Remote Windows Access (UNC Support)
 - **UNC Path Conversion**: Converts `C:\path\file.jar` to `\\hostname\C$\path\file.jar`
-- **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list
+- **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list (both exception-based and permission-based failures)
 - **Configurable**: Can be enabled/disabled via `remote.unc.enabled` setting
 - **Error Handling**: Captures UNC access failures in ScanError column
+- **Console Reporting**: Reports inaccessible hosts in real-time and final summary
 
 ### Error Handling (src/main/java/app/ExcelTool.java:ScanError column)
 - **ScanError column**: Automatically created to track scanning issues
 - **Error types captured**:
   - Empty file paths
-  - File access permissions errors
+  - File access permissions errors (differentiated from file non-existence)
+  - Non-regular files (directories or special files treated as not found)
   - JAR processing failures (missing MANIFEST.MF, corrupted files)
   - File modification date read errors
   - UNC access failures for remote Windows hosts
   - Invalid path format for UNC conversion
+  - Access denied scenarios (using Files.exists() + Files.notExists() logic)
 - **Error aggregation**: Multiple errors for same file are combined with `;` separator
 
 ## Build and Development Commands
@@ -56,10 +59,12 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Build Options
 
 1. **Build uber JAR (recommended)**:
-   - Windows: `build.bat` ✅ (manual dependency extraction)
+   - Windows: `build.bat` ✅ (manual dependency extraction with JAVA_HOME support)
    - Maven: `maven-build.bat` ✅ (Maven-based with automatic dependency resolution)
    - Linux/macOS: `./build.sh`
    - Output: `java-excel-tool-uber.jar`
+
+**JAVA_HOME Support**: `build.bat` automatically detects and uses `JAVA_HOME` environment variable, with fallback to default Java 8 installation path if not set.
 
 2. **Run the tool**:
    ```bash
@@ -112,3 +117,7 @@ Key dependencies:
 - **Resource Management**: Proper try-with-resources to prevent memory leaks
 - **Remote Access**: Smart UNC path handling with exclusion lists for performance
 - **Flexible Configuration**: Boolean settings with sensible defaults
+- **Enhanced File Analysis**: Uses Files.exists() + Files.notExists() to differentiate access issues
+- **File Type Validation**: Uses Files.isRegularFile() to exclude directories and special files
+- **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks
+- **Comprehensive Reporting**: Real-time and summary reporting of inaccessible hosts

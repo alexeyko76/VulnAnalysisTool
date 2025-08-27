@@ -28,7 +28,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 3. For each row:  
    - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
-   - **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list for the current run.
+   - **Smart Exclusion**: Hosts that fail UNC access (network errors or permission issues) are added to exclusion list for the current run.
+   - **File Type Validation**: Only processes regular files, excludes directories and special files.
    - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
    - Check if the file in the `FilePath` column exists.  
      - If the file exists:  
@@ -45,9 +46,23 @@ A defensive security tool that processes Excel files to analyze file existence, 
        - Write `"N"` into the `FileExists` column.  
        - Write `"File does not exist"` into the `ScanError` column.
        - Leave `FileModificationDate` and `JarVersion` blank.
+   - **Enhanced File Validation**: 
+     - Uses `Files.exists()` and `Files.notExists()` to differentiate access issues from non-existence
+     - Uses `Files.isRegularFile()` to ensure paths point to actual files (not directories)
+     - **Error Classifications**:
+       - Files that genuinely don't exist: `ScanError = "File does not exist"`
+       - Local access permission issues: `ScanError = "Access denied - cannot determine file existence"`
+       - UNC access permission issues: `ScanError = "UNC access denied - cannot determine file existence"`
+       - Non-regular files (directories): `ScanError = "Path exists but is not a regular file (directory or special file)"`
    - If any other scanning errors occur (e.g., permission issues, corrupted files, UNC access failures), record them in the `ScanError` column.  
 
-4. Save the updated Excel file after all rows are processed.  
+4. Save the updated Excel file after all rows are processed.
+
+5. **Console Reporting**: Provides comprehensive execution summary including:
+   - Total rows processed
+   - Rows skipped due to hostname mismatch  
+   - Rows skipped due to inaccessible remote hosts
+   - Complete list of inaccessible hosts identified during the run  
 
 ## Recommended Libraries
 - **Apache POI** – for reading and writing Excel files.  
@@ -70,8 +85,14 @@ A defensive security tool that processes Excel files to analyze file existence, 
 
 2. **Manual Build**:
    - Dependencies stored in `deps/` folder
-   - Windows: `build.bat`
+   - Windows: `build.bat` (with JAVA_HOME support and fallback detection)
    - Linux/macOS: `./build.sh`
+   
+**JAVA_HOME Support**: The `build.bat` script automatically:
+- Uses `JAVA_HOME` environment variable if set
+- Falls back to default Java 8 installation path: `C:\Program Files\Java\jdk1.8.0_401`
+- Validates that Java tools (javac, jar) exist before building
+- Provides clear error messages if Java installation is not found
 
 ### Running the Tool
 ```bash
