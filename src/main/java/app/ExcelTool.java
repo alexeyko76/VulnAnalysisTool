@@ -164,8 +164,9 @@ public class ExcelTool {
                         continue;
                     }
                     
-                    // Skip if remote host is in exclusion list
+                    // Skip if remote host is in exclusion list (but update ScanError for this row)
                     if (isRemoteWindows && inaccessibleHosts.contains(targetHost.trim().toLowerCase())) {
+                        writeCell(row, idxScanError, "Host previously identified as inaccessible via UNC");
                         skippedRemote++;
                         continue;
                     }
