@@ -1,6 +1,5 @@
 # Build outputs
 *.jar
-!deps/*.jar
 target/
 
 # IDE files
@@ -31,5 +30,5 @@ mvnw.cmd
 temp/
 tmp/
 
-# Dependencies (keep the JARs in deps/ as they are required)
-# Note: deps/*.jar are required dependencies, not build outputs
+# Dependencies (excluded - users should download via Maven or manually)
+deps/*.jar

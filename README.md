@@ -10,6 +10,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - Column names: `PlatformName`, `FilePath`, `HostName`
 - `platform.windows` - Windows platform identifier (e.g., "Windows_2019")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
+- `remote.unc.timeout` - UNC access timeout in seconds (default: 30, prevents infinite hangs)
 - `progress.display` - Progress display mode: "bar" (in-place progress bar) or "verbose" (timestamped row-by-row logging)  
 
 ## Processing Steps
@@ -29,7 +30,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 3. For each row:  
    - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
-   - **Smart Exclusion**: Hosts that fail UNC access (network errors or permission issues) are added to exclusion list for the current run.
+   - **Timeout Protection**: UNC access operations have configurable timeout to prevent infinite hangs on unreachable hosts.
+   - **Smart Exclusion**: Hosts that fail UNC access (network errors, timeouts, or permission issues) are added to exclusion list for the current run.
    - **UNC Access Preservation**: When UNC access fails, only the `ScanError` column is updated - existing values in `FileExists`, `FileModificationDate`, and `JarVersion` are preserved.
    - **File Type Validation**: Only processes regular files, excludes directories and special files.
    - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
@@ -55,6 +57,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
        - Files that genuinely don't exist: `ScanError = "File does not exist"`
        - Local access permission issues: `ScanError = "Access denied - cannot determine file existence"`
        - UNC access permission issues: `ScanError = "UNC access denied - cannot determine file existence"`
+       - UNC timeout issues: `ScanError = "UNC access timeout - host may be unreachable or slow"`
        - Non-regular files (directories): `ScanError = "Path exists but is not a regular file (directory or special file)"`
    - If any other scanning errors occur (e.g., permission issues, corrupted files, UNC access failures), record them in the `ScanError` column.  
 

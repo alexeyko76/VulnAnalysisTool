@@ -12,6 +12,8 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -38,6 +40,7 @@ public class ExcelTool {
     private static final String KEY_COL_HOSTNAME = "column.HostName";
     private static final String KEY_PLATFORM_WINDOWS = "platform.windows";
     private static final String KEY_REMOTE_UNC_ENABLED = "remote.unc.enabled";
+    private static final String KEY_REMOTE_UNC_TIMEOUT = "remote.unc.timeout";
     private static final String KEY_PROGRESS_DISPLAY = "progress.display";
 
     // Additional columns to ensure exist
@@ -61,12 +64,16 @@ public class ExcelTool {
             String colHostName = require(cfg, KEY_COL_HOSTNAME);
             String windowsPlatformValue = require(cfg, KEY_PLATFORM_WINDOWS);
             boolean remoteUncEnabled = getBoolean(cfg, KEY_REMOTE_UNC_ENABLED, true);
+            int remoteUncTimeout = getInteger(cfg, KEY_REMOTE_UNC_TIMEOUT, 30);
             String progressDisplay = getString(cfg, KEY_PROGRESS_DISPLAY, "bar");
 
             String localHost = getLocalHostName();
             System.out.println("Local hostname: " + localHost);
             System.out.println("Windows platform value: " + windowsPlatformValue);
             System.out.println("Remote UNC access enabled: " + remoteUncEnabled);
+            if (remoteUncEnabled) {
+                System.out.println("UNC access timeout: " + remoteUncTimeout + " seconds");
+            }
             System.out.println("Progress display mode: " + progressDisplay);
 
             File excelFile = new File(excelPath);
@@ -188,9 +195,23 @@ public class ExcelTool {
                             updateProgress(r, totalRows, displayPath, useProgressBar);
                             
                             try {
-                                exists = Files.exists(resolved);
+                                // Use timeout for UNC access to prevent infinite hangs
+                                UncAccessResult result = checkUncPathWithTimeout(resolved, remoteUncTimeout);
+                                if (result.timedOut) {
+                                    // Timeout occurred - add host to exclusion list
+                                    inaccessibleHosts.add(targetHost.trim().toLowerCase());
+                                    writeCell(row, idxScanError, "UNC access timeout - host may be unreachable or slow");
+                                    skippedRemote++;
+                                    printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access timeout", useProgressBar);
+                                    continue;
+                                } else if (result.exception != null) {
+                                    // Exception during access
+                                    throw result.exception;
+                                }
+                                
+                                exists = result.exists;
                                 // For UNC paths, also check if we can determine file existence
-                                if (!exists) {
+                                if (!exists && !result.accessDenied) {
                                     boolean notExists = Files.notExists(resolved);
                                     if (!notExists) {
                                         // Neither exists() nor notExists() returned true for UNC path - access denied
@@ -364,6 +385,18 @@ public class ExcelTool {
             return defaultValue;
         }
         return v.trim();
+    }
+
+    private static int getInteger(Properties p, String key, int defaultValue) {
+        String v = p.getProperty(key);
+        if (v == null || v.trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
     }
 
     private static Map<String, Integer> mapHeaderIndices(Row header) {
@@ -613,5 +646,69 @@ public class ExcelTool {
         progressLine = progressLine + "                    "; // Fixed padding
         
         System.out.print("\r" + progressLine);
+    }
+    
+    // Helper class for UNC access results
+    private static class UncAccessResult {
+        boolean exists = false;
+        boolean timedOut = false;
+        boolean accessDenied = false;
+        Exception exception = null;
+        
+        UncAccessResult(boolean exists) {
+            this.exists = exists;
+        }
+        
+        UncAccessResult(Exception exception) {
+            this.exception = exception;
+        }
+        
+        static UncAccessResult timeout() {
+            UncAccessResult result = new UncAccessResult(false);
+            result.timedOut = true;
+            return result;
+        }
+        
+        static UncAccessResult accessDenied() {
+            UncAccessResult result = new UncAccessResult(false);
+            result.accessDenied = true;
+            return result;
+        }
+    }
+    
+    // Timeout-protected UNC path access
+    private static UncAccessResult checkUncPathWithTimeout(Path uncPath, int timeoutSeconds) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<UncAccessResult> future = executor.submit(new Callable<UncAccessResult>() {
+            @Override
+            public UncAccessResult call() {
+                try {
+                    boolean exists = Files.exists(uncPath);
+                    return new UncAccessResult(exists);
+                } catch (Exception e) {
+                    return new UncAccessResult(e);
+                }
+            }
+        });
+        
+        try {
+            // Wait for result with timeout
+            return future.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            // Cancel the task and return timeout result
+            future.cancel(true);
+            return UncAccessResult.timeout();
+        } catch (Exception e) {
+            return new UncAccessResult(e);
+        } finally {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+            }
+        }
     }
 }
