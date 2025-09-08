@@ -23,6 +23,8 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 - Main processing loop that reads Excel rows and updates file status
 - Required columns validation (exits without saving if missing)
 - Auto-creation of output columns: FileExists, FileModificationDate, JarVersion, ScanError, RemoteScanError
+- **Standardized error handling**: Consistent error recording through dedicated helper methods
+- **Code quality improvements**: Reduced duplication via helper methods for common operations
 
 ### Path Resolution (src/main/java/app/ExcelTool.java:267-270)
 - Cross-platform path normalization (converts `\` to `/`)
@@ -130,6 +132,8 @@ Key dependencies:
 - **Security**: Tool is designed for defensive file analysis, not exploitation
 - **Error Handling**: Tool exits without saving if required columns are missing
 - **Enhanced Error Reporting**: ScanError column captures local scanning issues (cleared for successful scans), RemoteScanError column captures remote UNC issues (cleared for successful remote scans)
+- **Standardized Error Handling**: Consistent error recording patterns through dedicated helper methods (`recordScanError`, `recordRemoteScanError`, `addHostToExclusionList`)
+- **Code Quality**: Reduced code duplication through helper methods for common operations (`setFileNotFound`, `normalizeHostname`, `clearScanErrors`)
 - **Logging**: Uses System.out/System.err for status messages and warnings
 - **Cross-Platform**: Handles different path separators and hostname detection methods
 - **Date Format**: Human-readable timestamps (`yyyy-MM-dd HH:mm:ss`) instead of ISO format
@@ -143,3 +147,4 @@ Key dependencies:
 - **Progress Display**: Timestamped logging for detailed execution tracking
 - **Data Preservation**: UNC access failures preserve existing column data while recording errors in RemoteScanError column
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
+- **Maintainability**: Consistent patterns and helper methods improve code readability and reduce maintenance overhead

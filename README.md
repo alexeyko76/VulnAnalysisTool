@@ -88,6 +88,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
 ## Compatibility
 - Must run on **Java 1.8** (no newer language features or APIs beyond Java 8).  
 - Must be implemented in **a single Java file**.  
+- **Code Quality**: Implements standardized error handling patterns and helper methods to reduce duplication while maintaining single-file architecture.  
 
 ## Build & Dependencies
 

@@ -13,7 +13,6 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -170,18 +169,16 @@ public class ExcelTool {
                     }
                     
                     // Skip if remote host is in exclusion list (but update RemoteScanError for this row)
-                    if (isRemoteWindows && inaccessibleHosts.contains(targetHost.trim().toLowerCase())) {
-                        writeCell(row, idxRemoteScanError, "Host previously identified as inaccessible via UNC");
+                    if (isRemoteWindows && inaccessibleHosts.contains(normalizeHostname(targetHost))) {
+                        recordRemoteScanError(row, idxRemoteScanError, "Host previously identified as inaccessible via UNC");
                         skippedRemote++;
                         continue;
                     }
 
                     String rawPath = getStringCell(row, idxFilePath);
                     if (isBlank(rawPath)) {
-                        writeCell(row, idxFileExists, "N");
-                        writeCell(row, idxFileMod, "");
-                        writeCell(row, idxJarVersion, "");
-                        writeCell(row, idxScanError, "Empty file path");
+                        setFileNotFound(row, idxFileExists, idxFileMod, idxJarVersion);
+                        recordScanError(row, idxScanError, "Empty file path");
                         processed++;
                         continue;
                     }
@@ -205,10 +202,9 @@ public class ExcelTool {
                                 UncAccessResult result = checkUncPathWithTimeout(resolved, remoteUncTimeout);
                                 if (result.timedOut) {
                                     // Timeout occurred - add host to exclusion list
-                                    inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                    writeCell(row, idxRemoteScanError, "UNC access timeout - host may be unreachable or slow");
+                                    addHostToExclusionList(inaccessibleHosts, targetHost, row, idxRemoteScanError, 
+                                                         "UNC access timeout - host may be unreachable or slow");
                                     skippedRemote++;
-                                    printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access timeout");
                                     continue;
                                 } else if (result.exception != null) {
                                     // Exception during access
@@ -221,28 +217,24 @@ public class ExcelTool {
                                     boolean notExists = Files.notExists(resolved);
                                     if (!notExists) {
                                         // Neither exists() nor notExists() returned true for UNC path - access denied
-                                        inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                        writeCell(row, idxRemoteScanError, "UNC access denied - cannot determine file existence");
+                                        addHostToExclusionList(inaccessibleHosts, targetHost, row, idxRemoteScanError, 
+                                                             "UNC access denied - cannot determine file existence");
                                         skippedRemote++;
-                                        printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected");
                                         continue;
                                     }
                                 }
                             } catch (Exception e) {
                                 // UNC access failed - add host to exclusion list
-                                inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                writeCell(row, idxRemoteScanError, "Cannot access remote host via UNC: " + e.getMessage());
+                                addHostToExclusionList(inaccessibleHosts, targetHost, row, idxRemoteScanError, 
+                                                     "Cannot access remote host via UNC: " + e.getMessage());
                                 skippedRemote++;
-                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access failed");
                                 continue;
                             }
                         } else {
                             // Invalid path format for UNC conversion
                             resolved = resolvePathCrossPlatform(rawPath);
-                            writeCell(row, idxFileExists, "N");
-                            writeCell(row, idxFileMod, "");
-                            writeCell(row, idxJarVersion, "");
-                            writeCell(row, idxRemoteScanError, "Invalid path format for UNC conversion");
+                            setFileNotFound(row, idxFileExists, idxFileMod, idxJarVersion);
+                            recordRemoteScanError(row, idxRemoteScanError, "Invalid path format for UNC conversion");
                             processed++;
                             continue;
                         }
@@ -262,14 +254,11 @@ public class ExcelTool {
                             // Neither exists() nor notExists() returned true - likely access denied
                             // Add remote host to exclusion list to avoid repeated attempts
                             if (isRemoteWindows) {
-                                inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected");
-                                writeCell(row, idxRemoteScanError, "UNC access denied - cannot determine file existence");
+                                addHostToExclusionList(inaccessibleHosts, targetHost, row, idxRemoteScanError, 
+                                                     "UNC access denied - cannot determine file existence");
                             } else {
-                                writeCell(row, idxScanError, "Access denied - cannot determine file existence");
-                                writeCell(row, idxFileExists, "N");
-                                writeCell(row, idxFileMod, "");
-                                writeCell(row, idxJarVersion, "");
+                                recordScanError(row, idxScanError, "Access denied - cannot determine file existence");
+                                setFileNotFound(row, idxFileExists, idxFileMod, idxJarVersion);
                             }
                             if (isRemoteWindows) {
                                 skippedRemote++;
@@ -324,14 +313,16 @@ public class ExcelTool {
                             // Don't clear ScanError for remote scans - it may contain local file processing errors
                         } else {
                             // For local scans, only set ScanError for actual scanning issues, not simple non-existence
-                            writeCell(row, idxScanError, notRegularFileError != null ? notRegularFileError : "");
+                            if (notRegularFileError != null) {
+                                recordScanError(row, idxScanError, notRegularFileError);
+                            } else {
+                                recordScanError(row, idxScanError, ""); // Clear error for successful scan
+                            }
                         }
                     }
                     
-                    // Clear RemoteScanError for successful remote scans (no UNC access issues)
-                    if (isRemoteWindows) {
-                        writeCell(row, idxRemoteScanError, "");
-                    }
+                    // Clear error columns for successful scans
+                    clearScanErrors(row, idxScanError, idxRemoteScanError, isRemoteWindows);
 
                     processed++;
                 }
@@ -730,5 +721,48 @@ public class ExcelTool {
                 logWriter.println("ERROR: " + message);
             }
         }
+    }
+    
+    // Standardized error handling methods
+    private static void recordScanError(Row row, int idxScanError, String errorMessage) {
+        writeCell(row, idxScanError, errorMessage);
+    }
+    
+    private static void recordRemoteScanError(Row row, int idxRemoteScanError, String errorMessage) {
+        writeCell(row, idxRemoteScanError, errorMessage);
+    }
+    
+    private static void clearScanErrors(Row row, int idxScanError, int idxRemoteScanError, boolean isRemoteWindows) {
+        if (isRemoteWindows) {
+            writeCell(row, idxRemoteScanError, "");
+        } else {
+            writeCell(row, idxScanError, "");
+        }
+    }
+    
+    private static void addHostToExclusionList(Set<String> inaccessibleHosts, String hostname, 
+                                              Row row, int idxRemoteScanError, String reason) {
+        String normalizedHostname = normalizeHostname(hostname);
+        inaccessibleHosts.add(normalizedHostname);
+        recordRemoteScanError(row, idxRemoteScanError, reason);
+        printVerboseMessage("Added " + hostname.trim() + " to exclusion list - " + getReasonForLogging(reason));
+    }
+    
+    private static String getReasonForLogging(String reason) {
+        if (reason.contains("timeout")) return "UNC access timeout";
+        if (reason.contains("access denied")) return "access denied detected";
+        if (reason.contains("Cannot access")) return "UNC access failed";
+        return reason.toLowerCase();
+    }
+    
+    private static void setFileNotFound(Row row, int idxFileExists, int idxFileMod, int idxJarVersion) {
+        writeCell(row, idxFileExists, "N");
+        writeCell(row, idxFileMod, "");
+        writeCell(row, idxJarVersion, "");
+    }
+    
+    // Helper method for hostname normalization to reduce repeated toLowerCase() calls
+    private static String normalizeHostname(String hostname) {
+        return isBlank(hostname) ? "" : hostname.trim().toLowerCase();
     }
 }
