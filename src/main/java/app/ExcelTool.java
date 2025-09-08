@@ -41,15 +41,19 @@ public class ExcelTool {
     private static final String KEY_PLATFORM_WINDOWS = "platform.windows";
     private static final String KEY_REMOTE_UNC_ENABLED = "remote.unc.enabled";
     private static final String KEY_REMOTE_UNC_TIMEOUT = "remote.unc.timeout";
-    private static final String KEY_PROGRESS_DISPLAY = "progress.display";
+    private static final String KEY_LOG_FILENAME = "log.filename";
 
     // Additional columns to ensure exist
     private static final String COL_FILE_EXISTS = "FileExists";
     private static final String COL_FILE_MOD_DATE = "FileModificationDate";
     private static final String COL_JAR_VERSION = "JarVersion";
     private static final String COL_SCAN_ERROR = "ScanError";
+    private static final String COL_REMOTE_SCAN_ERROR = "RemoteScanError";
 
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    
+    // Dual logging support
+    private static PrintWriter logWriter = null;
 
     public static void main(String[] args) {
         int exit = 0;
@@ -65,16 +69,21 @@ public class ExcelTool {
             String windowsPlatformValue = require(cfg, KEY_PLATFORM_WINDOWS);
             boolean remoteUncEnabled = getBoolean(cfg, KEY_REMOTE_UNC_ENABLED, true);
             int remoteUncTimeout = getInteger(cfg, KEY_REMOTE_UNC_TIMEOUT, 30);
-            String progressDisplay = getString(cfg, KEY_PROGRESS_DISPLAY, "bar");
+            String logFilename = getString(cfg, KEY_LOG_FILENAME, "");
+            
+            // Initialize log file if specified
+            initializeLogFile(logFilename);
 
             String localHost = getLocalHostName();
-            System.out.println("Local hostname: " + localHost);
-            System.out.println("Windows platform value: " + windowsPlatformValue);
-            System.out.println("Remote UNC access enabled: " + remoteUncEnabled);
+            logMessage("Local hostname: " + localHost);
+            logMessage("Windows platform value: " + windowsPlatformValue);
+            logMessage("Remote UNC access enabled: " + remoteUncEnabled);
             if (remoteUncEnabled) {
-                System.out.println("UNC access timeout: " + remoteUncTimeout + " seconds");
+                logMessage("UNC access timeout: " + remoteUncTimeout + " seconds");
             }
-            System.out.println("Progress display mode: " + progressDisplay);
+            if (!isBlank(logFilename)) {
+                logMessage("Log file: " + logFilename);
+            }
 
             File excelFile = new File(excelPath);
             if (!excelFile.exists()) {
@@ -87,12 +96,12 @@ public class ExcelTool {
                 // Find the specified sheet by name
                 Sheet sheet = wb.getSheet(sheetName);
                 if (sheet == null) {
-                    System.err.println("ERROR: Sheet '" + sheetName + "' does not exist in the Excel file.");
-                    System.err.println("Available sheets:");
+                    logError("Sheet '" + sheetName + "' does not exist in the Excel file.");
+                    logError("Available sheets:");
                     for (int i = 0; i < wb.getNumberOfSheets(); i++) {
-                        System.err.println("  - " + wb.getSheetName(i));
+                        logError("  - " + wb.getSheetName(i));
                     }
-                    System.err.println("The tool will exit without processing.");
+                    logError("The tool will exit without processing.");
                     System.exit(6);
                 }
                 
@@ -111,8 +120,8 @@ public class ExcelTool {
                 if (!colIndex.containsKey(colHostName)) missingRequired.add(colHostName);
 
                 if (!missingRequired.isEmpty()) {
-                    System.err.println("ERROR: Required columns missing: " + missingRequired);
-                    System.err.println("The tool will exit without saving changes.");
+                    logError("Required columns missing: " + missingRequired);
+                    logError("The tool will exit without saving changes.");
                     System.exit(2);
                 }
 
@@ -121,6 +130,7 @@ public class ExcelTool {
                 ensureColumn(header, colIndex, COL_FILE_MOD_DATE);
                 ensureColumn(header, colIndex, COL_JAR_VERSION);
                 ensureColumn(header, colIndex, COL_SCAN_ERROR);
+                ensureColumn(header, colIndex, COL_REMOTE_SCAN_ERROR);
 
                 int idxPlatform = colIndex.get(colPlatform);
                 int idxFilePath = colIndex.get(colFilePath);
@@ -129,6 +139,7 @@ public class ExcelTool {
                 int idxFileMod = colIndex.get(COL_FILE_MOD_DATE);
                 int idxJarVersion = colIndex.get(COL_JAR_VERSION);
                 int idxScanError = colIndex.get(COL_SCAN_ERROR);
+                int idxRemoteScanError = colIndex.get(COL_REMOTE_SCAN_ERROR);
 
                 int processed = 0;
                 int skippedHost = 0;
@@ -139,14 +150,8 @@ public class ExcelTool {
                 
                 // Progress tracking
                 int totalRows = sheet.getLastRowNum();
-                boolean useProgressBar = "bar".equalsIgnoreCase(progressDisplay);
                 
-                if (useProgressBar) {
-                    System.out.println("Processing " + totalRows + " rows...");
-                    System.out.println(); // Empty line for progress display
-                } else {
-                    System.out.println("Processing " + totalRows + " rows (verbose mode):");
-                }
+                logMessage("Processing " + totalRows + " rows:");
 
                 for (int r = 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
@@ -164,9 +169,9 @@ public class ExcelTool {
                         continue;
                     }
                     
-                    // Skip if remote host is in exclusion list (but update ScanError for this row)
+                    // Skip if remote host is in exclusion list (but update RemoteScanError for this row)
                     if (isRemoteWindows && inaccessibleHosts.contains(targetHost.trim().toLowerCase())) {
-                        writeCell(row, idxScanError, "Host previously identified as inaccessible via UNC");
+                        writeCell(row, idxRemoteScanError, "Host previously identified as inaccessible via UNC");
                         skippedRemote++;
                         continue;
                     }
@@ -193,7 +198,7 @@ public class ExcelTool {
                             displayPath = uncPath; // Show UNC path in progress
                             
                             // Update progress display for UNC path (this may take time)
-                            updateProgress(r, totalRows, displayPath, useProgressBar);
+                            updateProgress(r, totalRows, displayPath);
                             
                             try {
                                 // Use timeout for UNC access to prevent infinite hangs
@@ -201,9 +206,9 @@ public class ExcelTool {
                                 if (result.timedOut) {
                                     // Timeout occurred - add host to exclusion list
                                     inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                    writeCell(row, idxScanError, "UNC access timeout - host may be unreachable or slow");
+                                    writeCell(row, idxRemoteScanError, "UNC access timeout - host may be unreachable or slow");
                                     skippedRemote++;
-                                    printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access timeout", useProgressBar);
+                                    printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access timeout");
                                     continue;
                                 } else if (result.exception != null) {
                                     // Exception during access
@@ -217,18 +222,18 @@ public class ExcelTool {
                                     if (!notExists) {
                                         // Neither exists() nor notExists() returned true for UNC path - access denied
                                         inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                        writeCell(row, idxScanError, "UNC access denied - cannot determine file existence");
+                                        writeCell(row, idxRemoteScanError, "UNC access denied - cannot determine file existence");
                                         skippedRemote++;
-                                        printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected", useProgressBar);
+                                        printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected");
                                         continue;
                                     }
                                 }
                             } catch (Exception e) {
                                 // UNC access failed - add host to exclusion list
                                 inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                writeCell(row, idxScanError, "Cannot access remote host via UNC: " + e.getMessage());
+                                writeCell(row, idxRemoteScanError, "Cannot access remote host via UNC: " + e.getMessage());
                                 skippedRemote++;
-                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access failed", useProgressBar);
+                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - UNC access failed");
                                 continue;
                             }
                         } else {
@@ -237,7 +242,7 @@ public class ExcelTool {
                             writeCell(row, idxFileExists, "N");
                             writeCell(row, idxFileMod, "");
                             writeCell(row, idxJarVersion, "");
-                            writeCell(row, idxScanError, "Invalid path format for UNC conversion");
+                            writeCell(row, idxRemoteScanError, "Invalid path format for UNC conversion");
                             processed++;
                             continue;
                         }
@@ -248,7 +253,7 @@ public class ExcelTool {
                     }
                     
                     // Update progress display
-                    updateProgress(r, totalRows, displayPath, useProgressBar);
+                    updateProgress(r, totalRows, displayPath);
                     
                     // Check for access permission issues using both exists() and notExists()
                     if (!exists) {
@@ -258,8 +263,8 @@ public class ExcelTool {
                             // Add remote host to exclusion list to avoid repeated attempts
                             if (isRemoteWindows) {
                                 inaccessibleHosts.add(targetHost.trim().toLowerCase());
-                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected", useProgressBar);
-                                writeCell(row, idxScanError, "UNC access denied - cannot determine file existence");
+                                printVerboseMessage("Added " + targetHost.trim() + " to exclusion list - access denied detected");
+                                writeCell(row, idxRemoteScanError, "UNC access denied - cannot determine file existence");
                             } else {
                                 writeCell(row, idxScanError, "Access denied - cannot determine file existence");
                                 writeCell(row, idxFileExists, "N");
@@ -294,7 +299,7 @@ public class ExcelTool {
                         } catch (IOException e) {
                             writeCell(row, idxFileMod, "");
                             scanErrors.append("Cannot read modification date: ").append(e.getMessage());
-                            System.err.println("WARN: Could not read last modified for: " + resolved + " -> " + e.getMessage());
+                            logError("WARN: Could not read last modified for: " + resolved + " -> " + e.getMessage());
                         }
                         // Jar handling
                         if (resolved.getFileName() != null && resolved.getFileName().toString().toLowerCase(Locale.ENGLISH).endsWith(".jar")) {
@@ -313,8 +318,19 @@ public class ExcelTool {
                     } else {
                         writeCell(row, idxFileMod, "");
                         writeCell(row, idxJarVersion, "");
-                        // Use specific error message for non-regular files, otherwise default message
-                        writeCell(row, idxScanError, notRegularFileError != null ? notRegularFileError : "File does not exist");
+                        // For local scans, clear ScanError when file simply doesn't exist (successful scan)
+                        // For remote scans, preserve any existing ScanError and use RemoteScanError for UNC issues
+                        if (isRemoteWindows) {
+                            // Don't clear ScanError for remote scans - it may contain local file processing errors
+                        } else {
+                            // For local scans, only set ScanError for actual scanning issues, not simple non-existence
+                            writeCell(row, idxScanError, notRegularFileError != null ? notRegularFileError : "");
+                        }
+                    }
+                    
+                    // Clear RemoteScanError for successful remote scans (no UNC access issues)
+                    if (isRemoteWindows) {
+                        writeCell(row, idxRemoteScanError, "");
                     }
 
                     processed++;
@@ -325,30 +341,32 @@ public class ExcelTool {
                     wb.write(fos);
                 }
                 
-                // Clear progress bar and print final results
-                if (useProgressBar) {
-                    // Complete the progress bar with final newline
-                    System.out.println();
-                }
-                System.out.println("Done. Rows processed: " + processed + ", skipped (hostname mismatch): " + skippedHost + ", skipped (remote inaccessible): " + skippedRemote);
+                // Print final results
+                logMessage("Done. Rows processed: " + processed + ", skipped (hostname mismatch): " + skippedHost + ", skipped (remote inaccessible): " + skippedRemote);
                 if (!inaccessibleHosts.isEmpty()) {
-                    System.out.println("Inaccessible hosts identified during this run: " + inaccessibleHosts);
+                    logMessage("Inaccessible hosts identified during this run: " + inaccessibleHosts);
                 }
             }
         } catch (java.io.IOException e) {
-            System.err.println("ERROR: IO failure: " + e.getMessage());
+            logError("IO failure: " + e.getMessage());
             exit = 3;
         } catch (IllegalArgumentException e) {
-            System.err.println("ERROR: " + e.getMessage());
+            logError(e.getMessage());
             exit = 4;
         } catch (Exception e) {
-            System.err.println("ERROR: Unexpected failure: " + e.getMessage());
+            logError("Unexpected failure: " + e.getMessage());
             e.printStackTrace(System.err);
+            if (logWriter != null) {
+                e.printStackTrace(logWriter);
+            }
             exit = 5;
         }
         if (exit != 0) {
             System.exit(exit);
         }
+        
+        // Close log file
+        closeLogFile();
     }
 
     private static Properties loadConfig(String path) throws IOException {
@@ -537,7 +555,7 @@ public class ExcelTool {
                 }
             }
         } catch (IOException e) {
-            System.err.println("WARN: Failed to read manifest from jar: " + jarFile + " -> " + e.getMessage());
+            logError("WARN: Failed to read manifest from jar: " + jarFile + " -> " + e.getMessage());
             return new JarResult(null, e.getMessage());
         } finally {
             if (zip != null) {
@@ -583,70 +601,23 @@ public class ExcelTool {
             }
             
         } catch (IOException e) {
-            System.err.println("WARN: Failed to manually parse manifest: " + e.getMessage());
+            logError("WARN: Failed to manually parse manifest: " + e.getMessage());
         }
         return null;
     }
     
-    private static void updateProgress(int currentRow, int totalRows, String currentFile, boolean useProgressBar) {
-        if (!useProgressBar) {
-            // Verbose mode - simple row-by-row logging with timestamp
-            System.out.println(getCurrentTimestamp() + " Row " + currentRow + "/" + totalRows + ": " + currentFile);
-            return;
-        }
-        
-        // Progress bar mode (original logic)
-        updateProgressBar(currentRow, totalRows, currentFile);
+    private static void updateProgress(int currentRow, int totalRows, String currentFile) {
+        // Verbose mode - simple row-by-row logging with timestamp
+        logMessage(getCurrentTimestamp() + " Row " + currentRow + "/" + totalRows + ": " + currentFile);
     }
     
-    private static void printVerboseMessage(String message, boolean useProgressBar) {
-        if (useProgressBar) {
-            // In progress bar mode, suppress verbose messages
-            return;
-        } else {
-            // In verbose mode, indent additional messages for clarity with timestamp
-            System.out.println(getCurrentTimestamp() + "   -> " + message);
-        }
+    private static void printVerboseMessage(String message) {
+        // Indent additional messages for clarity with timestamp
+        logMessage(getCurrentTimestamp() + "   -> " + message);
     }
     
     private static String getCurrentTimestamp() {
         return ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-    }
-    
-    private static void updateProgressBar(int currentRow, int totalRows, String currentFile) {
-        // Calculate progress percentage
-        int percentage = (int) ((currentRow * 100.0) / totalRows);
-        
-        // Create progress bar (30 characters wide for better fit)
-        int progressChars = (percentage * 30) / 100; // 30 chars = 100%
-        StringBuilder progressBar = new StringBuilder();
-        progressBar.append("[");
-        for (int i = 0; i < 30; i++) {
-            if (i < progressChars) {
-                progressBar.append("=");
-            } else if (i == progressChars && percentage < 100) {
-                progressBar.append(">");
-            } else {
-                progressBar.append(" ");
-            }
-        }
-        progressBar.append("] ");
-        progressBar.append(String.format("%3d%%", percentage));
-        progressBar.append(String.format(" (%d/%d)", currentRow, totalRows));
-        
-        // Truncate file path if too long for display
-        String displayFile = currentFile;
-        if (displayFile.length() > 60) {
-            displayFile = "..." + displayFile.substring(displayFile.length() - 57);
-        }
-        
-        // Simple approach: print progress line with carriage return for overwrite
-        String progressLine = "Progress: " + progressBar.toString() + " | File: " + displayFile;
-        
-        // Add padding spaces at the end to clear previous longer lines
-        progressLine = progressLine + "                    "; // Fixed padding
-        
-        System.out.print("\r" + progressLine);
     }
     
     // Helper class for UNC access results
@@ -709,6 +680,54 @@ public class ExcelTool {
                 }
             } catch (InterruptedException e) {
                 executor.shutdownNow();
+            }
+        }
+    }
+    
+    // Dual logging utility methods
+    private static void initializeLogFile(String logFilename) {
+        if (isBlank(logFilename)) {
+            return; // No log file specified
+        }
+        
+        try {
+            File logFile = new File(logFilename);
+            logWriter = new PrintWriter(new FileWriter(logFile, false), true); // Overwrite existing log
+            logWriter.println("=== Excel Tool Log Started at " + getCurrentTimestamp() + " ===");
+        } catch (IOException e) {
+            System.err.println("WARNING: Could not create log file " + logFilename + ": " + e.getMessage());
+            logWriter = null;
+        }
+    }
+    
+    private static void closeLogFile() {
+        if (logWriter != null) {
+            logWriter.println("=== Excel Tool Log Ended at " + getCurrentTimestamp() + " ===");
+            logWriter.close();
+            logWriter = null;
+        }
+    }
+    
+    private static void logMessage(String message) {
+        // Always output to console
+        System.out.println(message);
+        
+        // Also write to log file if available
+        if (logWriter != null) {
+            logWriter.println(message);
+        }
+    }
+    
+    private static void logError(String message) {
+        // Always output to console error
+        System.err.println(message);
+        
+        // Also write to log file if available (don't prefix ERROR if message already has a prefix)
+        if (logWriter != null) {
+            if (message.startsWith("WARN:") || message.startsWith("ERROR:")) {
+                logWriter.println(message);
+            } else {
+                logWriter.println("ERROR: " + message);
             }
         }
     }

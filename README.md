@@ -10,8 +10,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - Column names: `PlatformName`, `FilePath`, `HostName`
 - `platform.windows` - Windows platform identifier (e.g., "Windows_2019")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
-- `remote.unc.timeout` - UNC access timeout in seconds (default: 30, prevents infinite hangs)
-- `progress.display` - Progress display mode: "bar" (in-place progress bar) or "verbose" (timestamped row-by-row logging)  
+- `remote.unc.timeout` - UNC access timeout in seconds (default: 7, prevents infinite hangs)
+- `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file  
 
 ## Processing Steps
 1. Open the Excel file.  
@@ -23,7 +23,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
      - `FileExists`  
      - `FileModificationDate` (readable format: `yyyy-MM-dd HH:mm:ss`)
      - `JarVersion` (optional, filled only for `.jar` files)
-     - `ScanError` (captures any scanning issues or errors)  
+     - `ScanError` (captures local file scanning issues or errors)
+     - `RemoteScanError` (captures remote UNC access issues, cleared for successful remote scans)  
 
 2. Read the Excel file row by row.  
 
@@ -32,7 +33,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
    - **Timeout Protection**: UNC access operations have configurable timeout to prevent infinite hangs on unreachable hosts.
    - **Smart Exclusion**: Hosts that fail UNC access (network errors, timeouts, or permission issues) are added to exclusion list for the current run.
-   - **UNC Access Preservation**: When UNC access fails, only the `ScanError` column is updated - existing values in `FileExists`, `FileModificationDate`, and `JarVersion` are preserved.
+   - **UNC Access Preservation**: When UNC access fails, only the `RemoteScanError` column is updated - existing values in `FileExists`, `FileModificationDate`, and `JarVersion` are preserved.
    - **File Type Validation**: Only processes regular files, excludes directories and special files.
    - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
    - Check if the file in the `FilePath` column exists.  
@@ -48,7 +49,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
          - If any JAR processing errors occur, record them in the `ScanError` column.
      - If the file does **not** exist:  
        - Write `"N"` into the `FileExists` column.  
-       - Write `"File does not exist"` into the `ScanError` column.
+       - Clear the `ScanError` column (successful scan - file simply doesn't exist).
        - Leave `FileModificationDate` and `JarVersion` blank.
    - **Enhanced File Validation**: 
      - Uses `Files.exists()` and `Files.notExists()` to differentiate access issues from non-existence
@@ -56,16 +57,21 @@ A defensive security tool that processes Excel files to analyze file existence, 
      - **Error Classifications**:
        - Files that genuinely don't exist: `ScanError = "File does not exist"`
        - Local access permission issues: `ScanError = "Access denied - cannot determine file existence"`
-       - UNC access permission issues: `ScanError = "UNC access denied - cannot determine file existence"`
-       - UNC timeout issues: `ScanError = "UNC access timeout - host may be unreachable or slow"`
        - Non-regular files (directories): `ScanError = "Path exists but is not a regular file (directory or special file)"`
-   - If any other scanning errors occur (e.g., permission issues, corrupted files, UNC access failures), record them in the `ScanError` column.  
+       - JAR processing errors: `ScanError = "JAR processing error: [details]"`
+       - UNC access permission issues: `RemoteScanError = "UNC access denied - cannot determine file existence"`
+       - UNC timeout issues: `RemoteScanError = "UNC access timeout - host may be unreachable or slow"`
+       - UNC connection failures: `RemoteScanError = "Cannot access remote host via UNC: [details]"`
+       - Invalid UNC paths: `RemoteScanError = "Invalid path format for UNC conversion"`
+   - **Error Column Usage**:
+     - `ScanError`: Records local file scanning issues (file access, JAR processing, etc.) - cleared for successful local scans
+     - `RemoteScanError`: Records UNC access issues for remote hosts - cleared for successful remote scans
+   - If any other local scanning errors occur (e.g., permission issues, corrupted files), record them in the `ScanError` column.  
 
 4. Save the updated Excel file after all rows are processed.
 
 5. **Progress Display & Console Reporting**: 
-   - **Progress Bar Mode** (`progress.display=bar`): Shows in-place updating progress bar with current file being processed
-   - **Verbose Mode** (`progress.display=verbose`): Displays timestamped row-by-row logging with detailed messages
+   - **Timestamped Logging**: Displays timestamped row-by-row logging with detailed messages
    - **Final Summary**: Comprehensive execution summary including:
      - Total rows processed
      - Rows skipped due to hostname mismatch  

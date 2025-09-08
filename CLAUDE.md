@@ -22,7 +22,7 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Core Logic (src/main/java/app/ExcelTool.java:45-177)
 - Main processing loop that reads Excel rows and updates file status
 - Required columns validation (exits without saving if missing)
-- Auto-creation of output columns: FileExists, FileModificationDate, JarVersion, ScanError
+- Auto-creation of output columns: FileExists, FileModificationDate, JarVersion, ScanError, RemoteScanError
 
 ### Path Resolution (src/main/java/app/ExcelTool.java:267-270)
 - Cross-platform path normalization (converts `\` to `/`)
@@ -33,32 +33,39 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 - Only processes files with `.jar` extension
 - **Robust Parsing**: Uses both Manifest API and manual text parsing as fallback
 - Enhanced error reporting captures JAR processing issues in ScanError column
+- RemoteScanError column captures UNC access issues for remote hosts
 
 ### Remote Windows Access (UNC Support)
 - **UNC Path Conversion**: Converts `C:\path\file.jar` to `\\hostname\C$\path\file.jar`
 - **Smart Exclusion**: Hosts that fail UNC access are added to exclusion list (both exception-based and permission-based failures)
-- **Data Preservation**: UNC access failures only update `ScanError` column, preserving existing data in other columns
+- **Data Preservation**: UNC access failures only update `RemoteScanError` column, preserving existing data in other columns
 - **Configurable**: Can be enabled/disabled via `remote.unc.enabled` setting
-- **Error Handling**: Captures UNC access failures in ScanError column
+- **Error Handling**: Captures UNC access failures in RemoteScanError column
 - **Console Reporting**: Reports inaccessible hosts in real-time and final summary
 
 ### Progress Display System
-- **Progress Bar Mode** (`progress.display=bar`): In-place updating progress bar with current file display, verbose messages suppressed for clean display
-- **Verbose Mode** (`progress.display=verbose`): Timestamped row-by-row logging with detailed messages and UNC access notifications  
+- **Timestamped Logging**: Row-by-row logging with detailed messages and UNC access notifications  
 - **Real-time Updates**: Shows current processing status and file being analyzed
-- **Clean Output**: Proper handling of console display modes to prevent text overlap
 
-### Error Handling (src/main/java/app/ExcelTool.java:ScanError column)
-- **ScanError column**: Automatically created to track scanning issues
-- **Error types captured**:
+### Error Handling (src/main/java/app/ExcelTool.java:Error columns)
+- **ScanError column**: Automatically created to track local file scanning issues
+- **RemoteScanError column**: Automatically created to track remote UNC scanning issues
+- **Error types captured in ScanError**:
   - Empty file paths
-  - File access permissions errors (differentiated from file non-existence)
+  - Local file access permissions errors (differentiated from file non-existence)
   - Non-regular files (directories or special files treated as not found)
   - JAR processing failures (missing MANIFEST.MF, corrupted files)
   - File modification date read errors
+  - Access denied scenarios for local files (using Files.exists() + Files.notExists() logic)
+- **Error types captured in RemoteScanError**:
   - UNC access failures for remote Windows hosts
+  - UNC access timeouts (hosts unreachable or slow)
+  - UNC access denied scenarios
   - Invalid path format for UNC conversion
-  - Access denied scenarios (using Files.exists() + Files.notExists() logic)
+  - Host exclusion list messages
+- **Error behavior**: 
+  - ScanError is cleared (set to blank) for successful local scans where file status can be determined
+  - RemoteScanError is cleared (set to blank) for successful remote scans
 - **Error aggregation**: Multiple errors for same file are combined with `;` separator
 
 ## Build and Development Commands
@@ -91,7 +98,8 @@ Edit `config.properties` to set:
 - Column names for PlatformName, FilePath, HostName
 - `platform.windows`: Windows platform value (e.g., "Windows_2019")
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
-- `progress.display`: Progress display mode - "bar" (in-place progress bar) or "verbose" (timestamped detailed logging)
+- `remote.unc.timeout`: UNC access timeout in seconds (default: 7)
+- `log.filename`: Log file name (optional) - saves console output to specified file
 
 ### Dependencies
 
@@ -118,7 +126,7 @@ Key dependencies:
 - **Java 1.8 Compatibility**: Code must remain compatible with Java 8
 - **Security**: Tool is designed for defensive file analysis, not exploitation
 - **Error Handling**: Tool exits without saving if required columns are missing
-- **Enhanced Error Reporting**: ScanError column captures and reports all scanning issues
+- **Enhanced Error Reporting**: ScanError column captures local scanning issues (cleared for successful scans), RemoteScanError column captures remote UNC issues (cleared for successful remote scans)
 - **Logging**: Uses System.out/System.err for status messages and warnings
 - **Cross-Platform**: Handles different path separators and hostname detection methods
 - **Date Format**: Human-readable timestamps (`yyyy-MM-dd HH:mm:ss`) instead of ISO format
@@ -129,6 +137,6 @@ Key dependencies:
 - **File Type Validation**: Uses Files.isRegularFile() to exclude directories and special files
 - **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks
 - **Comprehensive Reporting**: Real-time and summary reporting of inaccessible hosts
-- **Progress Display Flexibility**: Configurable progress display modes (bar vs verbose) for different use cases
-- **Data Preservation**: UNC access failures preserve existing column data while recording errors
+- **Progress Display**: Timestamped logging for detailed execution tracking
+- **Data Preservation**: UNC access failures preserve existing column data while recording errors in RemoteScanError column
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
