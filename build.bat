@@ -33,16 +33,20 @@ mkdir target\uber\classes
 mkdir target\uber\stage
 
 rem 1) Compile
+echo Compiling Java source files...
 "%JAVAC_CMD%" -source 1.8 -target 1.8 -cp "deps\*" -d target\uber\classes src\main\java\app\ExcelTool.java || goto :err
 
 rem 2) Thin jar
+echo Creating thin JAR...
 "%JAR_CMD%" cfe target\uber\app-thin.jar app.ExcelTool -C target\uber\classes . || goto :err
 
 rem 3) Unpack
+echo Unpacking application JAR...
 pushd target\uber\stage
 "%JAR_CMD%" xf ..\app-thin.jar
 
-rem Extract each dependency JAR individually  
+rem Extract each dependency JAR individually
+echo Extracting dependency JARs...  
 "%JAR_CMD%" xf ..\..\..\deps\poi-5.4.1.jar
 "%JAR_CMD%" xf ..\..\..\deps\poi-ooxml-5.4.1.jar
 "%JAR_CMD%" xf ..\..\..\deps\poi-ooxml-lite-5.4.1.jar
@@ -55,16 +59,23 @@ rem Extract each dependency JAR individually
 "%JAR_CMD%" xf ..\..\..\deps\log4j-core-2.17.2.jar
 
 rem 4) Remove signatures
+echo Removing JAR signatures...
 del /Q META-INF\*.SF 2>NUL
 del /Q META-INF\*.DSA 2>NUL
 del /Q META-INF\*.RSA 2>NUL
 
 rem 5) Manifest
+echo Creating manifest file...
 > MANIFEST.MF echo Main-Class: app.ExcelTool
 
 rem 6) Uber jar
+echo Building uber JAR...
 "%JAR_CMD%" cfm ..\..\..\java-excel-tool-uber.jar MANIFEST.MF . || goto :err
 popd
+
+rem Clean up target folder after successful build
+echo Cleaning up build artifacts...
+rmdir /S /Q target 2>NUL
 
 echo Built uber jar: java-excel-tool-uber.jar
 echo Run with: java -jar java-excel-tool-uber.jar config.properties

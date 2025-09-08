@@ -73,12 +73,15 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Build Options
 
 1. **Build uber JAR (recommended)**:
-   - Windows: `build.bat` ✅ (manual dependency extraction with JAVA_HOME support)
+   - Windows: `build.bat` ✅ (manual dependency extraction with JAVA_HOME support, progress messages, automatic cleanup)
    - Maven: `maven-build.bat` ✅ (Maven-based with automatic dependency resolution)
    - Linux/macOS: `./build.sh`
    - Output: `java-excel-tool-uber.jar`
 
-**JAVA_HOME Support**: `build.bat` automatically detects and uses `JAVA_HOME` environment variable, with fallback to default Java 8 installation path if not set.
+**Enhanced build.bat Features**:
+- **JAVA_HOME Support**: Automatically detects and uses `JAVA_HOME` environment variable, with fallback to default Java 8 installation path if not set
+- **Progress Messages**: Shows clear progress indicators for each build stage (compiling, extracting dependencies, creating JAR, etc.)
+- **Automatic Cleanup**: Removes temporary build artifacts (`target` folder) after successful build to keep workspace clean
 
 2. **Run the tool**:
    ```bash
@@ -135,7 +138,7 @@ Key dependencies:
 - **Flexible Configuration**: Boolean settings with sensible defaults
 - **Enhanced File Analysis**: Uses Files.exists() + Files.notExists() to differentiate access issues
 - **File Type Validation**: Uses Files.isRegularFile() to exclude directories and special files
-- **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks
+- **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks, progress messaging, and automatic cleanup
 - **Comprehensive Reporting**: Real-time and summary reporting of inaccessible hosts
 - **Progress Display**: Timestamped logging for detailed execution tracking
 - **Data Preservation**: UNC access failures preserve existing column data while recording errors in RemoteScanError column

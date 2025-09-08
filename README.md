@@ -99,14 +99,15 @@ A defensive security tool that processes Excel files to analyze file existence, 
 
 2. **Manual Build**:
    - Dependencies stored in `deps/` folder
-   - Windows: `build.bat` (with JAVA_HOME support and fallback detection)
+   - Windows: `build.bat` (with JAVA_HOME support, progress messages, and automatic cleanup)
    - Linux/macOS: `./build.sh`
    
-**JAVA_HOME Support**: The `build.bat` script automatically:
-- Uses `JAVA_HOME` environment variable if set
-- Falls back to default Java 8 installation path: `C:\Program Files\Java\jdk1.8.0_401`
-- Validates that Java tools (javac, jar) exist before building
-- Provides clear error messages if Java installation is not found
+**Enhanced build.bat Features**: The `build.bat` script provides:
+- **JAVA_HOME Support**: Uses `JAVA_HOME` environment variable if set, falls back to default Java 8 installation path: `C:\Program Files\Java\jdk1.8.0_401`
+- **Build Validation**: Validates that Java tools (javac, jar) exist before building
+- **Progress Messages**: Clear status messages for each build stage (compiling, extracting dependencies, creating JAR, cleanup)
+- **Automatic Cleanup**: Removes temporary build artifacts (`target` folder) after successful build
+- **Error Handling**: Provides clear error messages if Java installation is not found or build fails
 
 ### Running the Tool
 ```bash
