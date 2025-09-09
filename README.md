@@ -24,11 +24,14 @@ A defensive security tool that processes Excel files to analyze file existence, 
      - `FileModificationDate` (readable format: `yyyy-MM-dd HH:mm:ss`)
      - `JarVersion` (optional, filled only for `.jar` files)
      - `ScanError` (captures local file scanning issues or errors)
-     - `RemoteScanError` (captures remote UNC access issues, cleared for successful remote scans)  
+     - `RemoteScanError` (captures remote UNC access issues, cleared for successful remote scans)
+     - `ScanDate` (timestamp when scan was performed, format: `yyyy-MM-dd HH:mm:ss`)  
 
 2. Read the Excel file row by row.  
 
 3. For each row:  
+   - **Hostname Filtering**: Skip rows that don't match the local hostname (and aren't remote Windows hosts if UNC is enabled)
+   - **Scan Timestamp**: Record the current timestamp in `ScanDate` column for all processed hosts (not skipped due to hostname mismatch)
    - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
    - **Timeout Protection**: UNC access operations have configurable timeout to prevent infinite hangs on unreachable hosts.

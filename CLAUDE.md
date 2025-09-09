@@ -22,7 +22,7 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Core Logic (src/main/java/app/ExcelTool.java:45-177)
 - Main processing loop that reads Excel rows and updates file status
 - Required columns validation (exits without saving if missing)
-- Auto-creation of output columns: FileExists, FileModificationDate, JarVersion, ScanError, RemoteScanError
+- Auto-creation of output columns: FileExists, FileModificationDate, JarVersion, ScanError, RemoteScanError, ScanDate
 - **Standardized error handling**: Consistent error recording through dedicated helper methods
 - **Code quality improvements**: Reduced duplication via helper methods for common operations
 
@@ -147,4 +147,5 @@ Key dependencies:
 - **Progress Display**: Timestamped logging for detailed execution tracking
 - **Data Preservation**: UNC access failures preserve existing column data while recording errors in RemoteScanError column
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
+- **Scan Auditing**: ScanDate column records timestamp when each host is processed (not skipped due to hostname mismatch)
 - **Maintainability**: Consistent patterns and helper methods improve code readability and reduce maintenance overhead
