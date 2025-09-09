@@ -48,6 +48,7 @@ public class ExcelTool {
     private static final String COL_JAR_VERSION = "JarVersion";
     private static final String COL_SCAN_ERROR = "ScanError";
     private static final String COL_REMOTE_SCAN_ERROR = "RemoteScanError";
+    private static final String COL_SCAN_DATE = "ScanDate";
 
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
@@ -130,6 +131,7 @@ public class ExcelTool {
                 ensureColumn(header, colIndex, COL_JAR_VERSION);
                 ensureColumn(header, colIndex, COL_SCAN_ERROR);
                 ensureColumn(header, colIndex, COL_REMOTE_SCAN_ERROR);
+                ensureColumn(header, colIndex, COL_SCAN_DATE);
 
                 int idxPlatform = colIndex.get(colPlatform);
                 int idxFilePath = colIndex.get(colFilePath);
@@ -139,6 +141,7 @@ public class ExcelTool {
                 int idxJarVersion = colIndex.get(COL_JAR_VERSION);
                 int idxScanError = colIndex.get(COL_SCAN_ERROR);
                 int idxRemoteScanError = colIndex.get(COL_REMOTE_SCAN_ERROR);
+                int idxScanDate = colIndex.get(COL_SCAN_DATE);
 
                 int processed = 0;
                 int skippedHost = 0;
@@ -167,6 +170,10 @@ public class ExcelTool {
                         skippedHost++;
                         continue;
                     }
+                    
+                    // Record scan timestamp for hosts that will be processed
+                    String scanTimestamp = getCurrentTimestamp();
+                    writeCell(row, idxScanDate, scanTimestamp);
                     
                     // Skip if remote host is in exclusion list (but update RemoteScanError for this row)
                     if (isRemoteWindows && inaccessibleHosts.contains(normalizeHostname(targetHost))) {
