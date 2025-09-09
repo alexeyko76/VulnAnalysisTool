@@ -8,7 +8,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - `excel.path` - Excel file path  
 - `sheet.name` - Sheet name to process
 - Column names: `PlatformName`, `FilePath`, `HostName`
-- `platform.windows` - Windows platform identifier (e.g., "Windows_2019")
+- `platform.windows` - Windows platform identifiers (comma-separated, supports spaces, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout` - UNC access timeout in seconds (default: 7, prevents infinite hangs)
 - `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file  
@@ -25,13 +25,13 @@ A defensive security tool that processes Excel files to analyze file existence, 
      - `JarVersion` (optional, filled only for `.jar` files)
      - `ScanError` (captures local file scanning issues or errors)
      - `RemoteScanError` (captures remote UNC access issues, cleared for successful remote scans)
-     - `ScanDate` (timestamp when scan was performed, format: `yyyy-MM-dd HH:mm:ss`)  
+     - `ScanDate` (timestamp when scanning session started, format: `yyyy-MM-dd HH:mm:ss`)  
 
 2. Read the Excel file row by row.  
 
 3. For each row:  
    - **Hostname Filtering**: Skip rows that don't match the local hostname (and aren't remote Windows hosts if UNC is enabled)
-   - **Scan Timestamp**: Record the current timestamp in `ScanDate` column for all processed hosts (not skipped due to hostname mismatch)
+   - **Scan Timestamp**: Record the session start timestamp in `ScanDate` column for all processed hosts (same timestamp for entire scanning session)
    - Process files for the local host name, or optionally for remote Windows hosts (if UNC access is enabled).
    - **UNC Access**: For remote Windows hosts, converts paths like `C:\path\file.jar` to `\\hostname\C$\path\file.jar`.
    - **Timeout Protection**: UNC access operations have configurable timeout to prevent infinite hangs on unreachable hosts.
@@ -58,9 +58,9 @@ A defensive security tool that processes Excel files to analyze file existence, 
      - Uses `Files.exists()` and `Files.notExists()` to differentiate access issues from non-existence
      - Uses `Files.isRegularFile()` to ensure paths point to actual files (not directories)
      - **Error Classifications**:
-       - Files that genuinely don't exist: `ScanError = "File does not exist"`
-       - Local access permission issues: `ScanError = "Access denied - cannot determine file existence"`
-       - Non-regular files (directories): `ScanError = "Path exists but is not a regular file (directory or special file)"`
+       - Invalid/corrupted paths: `FileExists = "X"`, `ScanError = "Empty file path"` or `"Path marked as N/A"` or `"Path is a directory, not a file"`
+       - Files that genuinely don't exist: `FileExists = "N"`, `ScanError = ""` (cleared for successful scan)
+       - Local access permission issues: `FileExists = "N"`, `ScanError = "Access denied - cannot determine file existence"`
        - JAR processing errors: `ScanError = "JAR processing error: [details]"`
        - UNC access permission issues: `RemoteScanError = "UNC access denied - cannot determine file existence"`
        - UNC timeout issues: `RemoteScanError = "UNC access timeout - host may be unreachable or slow"`
@@ -91,7 +91,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 ## Compatibility
 - Must run on **Java 1.8** (no newer language features or APIs beyond Java 8).  
 - Must be implemented in **a single Java file**.  
-- **Code Quality**: Implements standardized error handling patterns and helper methods to reduce duplication while maintaining single-file architecture.  
+- **Code Quality**: Implements standardized error handling patterns and helper methods to reduce duplication while maintaining single-file architecture.
+- **Flexible Configuration**: Supports multiple Windows platform values separated by commas, with proper handling of spaces in platform names.  
 
 ## Build & Dependencies
 

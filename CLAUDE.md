@@ -52,10 +52,14 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 ### Error Handling (src/main/java/app/ExcelTool.java:Error columns)
 - **ScanError column**: Automatically created to track local file scanning issues
 - **RemoteScanError column**: Automatically created to track remote UNC scanning issues
+- **Invalid Path Detection**: Extensible pattern system to identify corrupted or invalid file paths
+- **FileExists column values**:
+  - `Y`: File exists and is accessible
+  - `N`: File does not exist (but path is valid)
+  - `X`: Invalid path (empty, corrupted, or directory instead of file)
 - **Error types captured in ScanError**:
-  - Empty file paths
+  - Invalid path patterns (empty paths, "N/A", "N\A", directories)
   - Local file access permissions errors (differentiated from file non-existence)
-  - Non-regular files (directories or special files treated as not found)
   - JAR processing failures (missing MANIFEST.MF, corrupted files)
   - File modification date read errors
   - Access denied scenarios for local files (using Files.exists() + Files.notExists() logic)
@@ -101,7 +105,7 @@ Edit `config.properties` to set:
 - `excel.path`: Path to Excel file
 - `sheet.name`: Name of Excel sheet to process
 - Column names for PlatformName, FilePath, HostName
-- `platform.windows`: Windows platform value (e.g., "Windows_2019")
+- `platform.windows`: Windows platform values (comma-separated, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout`: UNC access timeout in seconds (default: 7)
 - `log.filename`: Log file name (optional) - saves console output to specified file
@@ -139,7 +143,7 @@ Key dependencies:
 - **Date Format**: Human-readable timestamps (`yyyy-MM-dd HH:mm:ss`) instead of ISO format
 - **Resource Management**: Proper try-with-resources to prevent memory leaks
 - **Remote Access**: Smart UNC path handling with exclusion lists for performance
-- **Flexible Configuration**: Boolean settings with sensible defaults
+- **Flexible Configuration**: Boolean settings with sensible defaults, support for multiple platform values
 - **Enhanced File Analysis**: Uses Files.exists() + Files.notExists() to differentiate access issues
 - **File Type Validation**: Uses Files.isRegularFile() to exclude directories and special files
 - **Build System Robustness**: JAVA_HOME detection with intelligent fallbacks, progress messaging, and automatic cleanup
@@ -147,5 +151,6 @@ Key dependencies:
 - **Progress Display**: Timestamped logging for detailed execution tracking
 - **Data Preservation**: UNC access failures preserve existing column data while recording errors in RemoteScanError column
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
-- **Scan Auditing**: ScanDate column records timestamp when each host is processed (not skipped due to hostname mismatch)
+- **Scan Auditing**: ScanDate column records session start timestamp for all processed hosts (same timestamp for entire scanning session)
+- **Invalid Path Handling**: Extensible system for detecting and marking invalid file paths with "X" in FileExists column
 - **Maintainability**: Consistent patterns and helper methods improve code readability and reduce maintenance overhead

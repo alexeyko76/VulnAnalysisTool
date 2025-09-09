@@ -66,7 +66,8 @@ public class ExcelTool {
             String colPlatform = require(cfg, KEY_COL_PLATFORM);
             String colFilePath = require(cfg, KEY_COL_FILEPATH);
             String colHostName = require(cfg, KEY_COL_HOSTNAME);
-            String windowsPlatformValue = require(cfg, KEY_PLATFORM_WINDOWS);
+            String windowsPlatformValues = require(cfg, KEY_PLATFORM_WINDOWS);
+            Set<String> windowsPlatforms = parseWindowsPlatforms(windowsPlatformValues);
             boolean remoteUncEnabled = getBoolean(cfg, KEY_REMOTE_UNC_ENABLED, true);
             int remoteUncTimeout = getInteger(cfg, KEY_REMOTE_UNC_TIMEOUT, 30);
             String logFilename = getString(cfg, KEY_LOG_FILENAME, "");
@@ -76,7 +77,7 @@ public class ExcelTool {
 
             String localHost = getLocalHostName();
             logMessage("Local hostname: " + localHost);
-            logMessage("Windows platform value: " + windowsPlatformValue);
+            logMessage("Windows platform values: " + windowsPlatforms);
             logMessage("Remote UNC access enabled: " + remoteUncEnabled);
             if (remoteUncEnabled) {
                 logMessage("UNC access timeout: " + remoteUncTimeout + " seconds");
@@ -150,6 +151,9 @@ public class ExcelTool {
                 // Exclusion list for hosts that cannot be accessed via UNC from current machine
                 Set<String> inaccessibleHosts = new HashSet<String>();
                 
+                // Single timestamp for entire scanning session
+                String sessionScanTimestamp = getCurrentTimestamp();
+                
                 // Progress tracking
                 int totalRows = sheet.getLastRowNum();
                 
@@ -162,7 +166,7 @@ public class ExcelTool {
                     String targetHost = getStringCell(row, idxHostName);
                     String targetPlatform = getStringCell(row, idxPlatform);
                     boolean isLocalHost = !isBlank(targetHost) && targetHost.trim().equalsIgnoreCase(localHost);
-                    boolean isWindowsPlatform = !isBlank(targetPlatform) && targetPlatform.trim().equalsIgnoreCase(windowsPlatformValue);
+                    boolean isWindowsPlatform = !isBlank(targetPlatform) && isWindowsPlatformMatch(targetPlatform, windowsPlatforms);
                     boolean isRemoteWindows = remoteUncEnabled && isWindowsPlatform && !isLocalHost && !isBlank(targetHost);
                     
                     // Skip if not local host and (UNC disabled or not a Windows platform for remote access)
@@ -172,8 +176,7 @@ public class ExcelTool {
                     }
                     
                     // Record scan timestamp for hosts that will be processed
-                    String scanTimestamp = getCurrentTimestamp();
-                    writeCell(row, idxScanDate, scanTimestamp);
+                    writeCell(row, idxScanDate, sessionScanTimestamp);
                     
                     // Skip if remote host is in exclusion list (but update RemoteScanError for this row)
                     if (isRemoteWindows && inaccessibleHosts.contains(normalizeHostname(targetHost))) {
@@ -183,9 +186,10 @@ public class ExcelTool {
                     }
 
                     String rawPath = getStringCell(row, idxFilePath);
-                    if (isBlank(rawPath)) {
-                        setFileNotFound(row, idxFileExists, idxFileMod, idxJarVersion);
-                        recordScanError(row, idxScanError, "Empty file path");
+                    
+                    // Check for invalid path patterns first (before path resolution)
+                    if (checkForInvalidPath(rawPath, null, isWindowsPlatform)) {
+                        setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError);
                         processed++;
                         continue;
                     }
@@ -276,11 +280,17 @@ public class ExcelTool {
                         }
                     }
                     
-                    // Check if it's a regular file (not a directory) - if not, treat as not found
-                    String notRegularFileError = null;
+                    // Check if it's a regular file (not a directory) - if not, mark as invalid
                     if (exists && !Files.isRegularFile(resolved)) {
-                        exists = false; // Treat non-regular files as not found
-                        notRegularFileError = "Path exists but is not a regular file (directory or special file)";
+                        // Re-check for invalid path now that we have resolved path (for directory detection)
+                        if (checkForInvalidPath(rawPath, resolved, isWindowsPlatform)) {
+                            setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError);
+                            processed++;
+                            continue;
+                        } else {
+                            // Fallback: treat as not found with error message
+                            exists = false;
+                        }
                     }
                     
                     writeCell(row, idxFileExists, exists ? "Y" : "N");
@@ -319,12 +329,8 @@ public class ExcelTool {
                         if (isRemoteWindows) {
                             // Don't clear ScanError for remote scans - it may contain local file processing errors
                         } else {
-                            // For local scans, only set ScanError for actual scanning issues, not simple non-existence
-                            if (notRegularFileError != null) {
-                                recordScanError(row, idxScanError, notRegularFileError);
-                            } else {
-                                recordScanError(row, idxScanError, ""); // Clear error for successful scan
-                            }
+                            // For local scans, clear ScanError for successful determination that file doesn't exist
+                            recordScanError(row, idxScanError, ""); // Clear error for successful scan
                         }
                     }
                     
@@ -771,5 +777,94 @@ public class ExcelTool {
     // Helper method for hostname normalization to reduce repeated toLowerCase() calls
     private static String normalizeHostname(String hostname) {
         return isBlank(hostname) ? "" : hostname.trim().toLowerCase();
+    }
+    
+    // Parse comma-separated Windows platform values, handling spaces in values
+    private static Set<String> parseWindowsPlatforms(String platformValues) {
+        Set<String> platforms = new HashSet<String>();
+        if (!isBlank(platformValues)) {
+            String[] values = platformValues.split(",");
+            for (String value : values) {
+                String trimmed = value.trim();
+                if (!trimmed.isEmpty()) {
+                    platforms.add(trimmed);
+                }
+            }
+        }
+        return platforms;
+    }
+    
+    // Check if target platform matches any of the configured Windows platforms
+    private static boolean isWindowsPlatformMatch(String targetPlatform, Set<String> windowsPlatforms) {
+        if (isBlank(targetPlatform) || windowsPlatforms.isEmpty()) {
+            return false;
+        }
+        String normalizedTarget = targetPlatform.trim();
+        for (String platform : windowsPlatforms) {
+            if (normalizedTarget.equalsIgnoreCase(platform)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    private static boolean checkForInvalidPath(String rawPath, Path resolvedPath, boolean isWindows) {
+        // Case 1: Blank/empty path
+        if (isBlank(rawPath)) {
+            return true;
+        }
+        
+        String trimmedPath = rawPath.trim();
+        String lowerPath = trimmedPath.toLowerCase();
+        
+        // Case 2: Specific invalid path patterns
+        if (lowerPath.equals("n/a") || 
+            lowerPath.equals("n\\a") || 
+            lowerPath.equals("na")) {
+            return true;
+        }
+        
+        // Case 3: Paths containing result.filename patterns
+        if (lowerPath.contains(" result.filename=") || lowerPath.contains("result.filename=")) {
+            return true;
+        }
+        
+        // Case 4: Paths starting with "C:\Program Files " (with trailing space)
+        if (lowerPath.startsWith("c:\\program files ")) {
+            return true;
+        }
+        
+        // Case 5: Windows .jar files with spaces in filename (invalid pattern)
+        if (lowerPath.endsWith(".jar") && trimmedPath.contains(" ") && isWindows) {
+            return true;
+        }
+        
+        // Case 6: Directory instead of file (if path exists and is accessible)
+        if (resolvedPath != null) {
+            try {
+                if (Files.exists(resolvedPath) && Files.isDirectory(resolvedPath)) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // If we can't determine, don't mark as invalid due to directory check
+                // Let normal file processing handle access issues
+            }
+        }
+        
+        // Extensible: Add more invalid path patterns here as needed
+        // Future patterns could include:
+        // - Invalid characters or formats
+        // - Specific known bad path patterns
+        // - Length restrictions
+        // - etc.
+        
+        return false;
+    }
+    
+    private static void setFileInvalid(Row row, int idxFileExists, int idxFileMod, int idxJarVersion, int idxScanError) {
+        writeCell(row, idxFileExists, "X");
+        writeCell(row, idxFileMod, "");
+        writeCell(row, idxJarVersion, "");
+        recordScanError(row, idxScanError, ""); // Clear ScanError - invalid path indicated by FileExists="X"
     }
 }
