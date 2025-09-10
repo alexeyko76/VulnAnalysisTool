@@ -41,6 +41,7 @@ public class ExcelTool {
     private static final String KEY_REMOTE_UNC_ENABLED = "remote.unc.enabled";
     private static final String KEY_REMOTE_UNC_TIMEOUT = "remote.unc.timeout";
     private static final String KEY_LOG_FILENAME = "log.filename";
+    private static final String KEY_INVALID_PATH_DETECTION = "invalid.path.detection";
 
     // Additional columns to ensure exist
     private static final String COL_FILE_EXISTS = "FileExists";
@@ -71,6 +72,7 @@ public class ExcelTool {
             boolean remoteUncEnabled = getBoolean(cfg, KEY_REMOTE_UNC_ENABLED, true);
             int remoteUncTimeout = getInteger(cfg, KEY_REMOTE_UNC_TIMEOUT, 30);
             String logFilename = getString(cfg, KEY_LOG_FILENAME, "");
+            boolean invalidPathDetection = getBoolean(cfg, KEY_INVALID_PATH_DETECTION, true);
             
             // Get hostname first for log file prefixing
             String localHost = getLocalHostName();
@@ -85,6 +87,7 @@ public class ExcelTool {
             if (remoteUncEnabled) {
                 logMessage("UNC access timeout: " + remoteUncTimeout + " seconds");
             }
+            logMessage("Invalid path detection enabled: " + invalidPathDetection);
             if (!isBlank(prefixedLogFilename)) {
                 logMessage("Log file: " + prefixedLogFilename);
             }
@@ -191,10 +194,13 @@ public class ExcelTool {
                     String rawPath = getStringCell(row, idxFilePath);
                     
                     // Check for invalid path patterns first (before path resolution)
-                    if (checkForInvalidPath(rawPath, null, isWindowsPlatform)) {
-                        setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError);
-                        processed++;
-                        continue;
+                    if (invalidPathDetection) {
+                        String invalidReason = checkForInvalidPath(rawPath, null, isWindowsPlatform);
+                        if (invalidReason != null) {
+                            setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError, invalidReason);
+                            processed++;
+                            continue;
+                        }
                     }
 
                     Path resolved;
@@ -286,12 +292,18 @@ public class ExcelTool {
                     // Check if it's a regular file (not a directory) - if not, mark as invalid
                     if (exists && !Files.isRegularFile(resolved)) {
                         // Re-check for invalid path now that we have resolved path (for directory detection)
-                        if (checkForInvalidPath(rawPath, resolved, isWindowsPlatform)) {
-                            setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError);
-                            processed++;
-                            continue;
+                        if (invalidPathDetection) {
+                            String directoryReason = checkForInvalidPath(rawPath, resolved, isWindowsPlatform);
+                            if (directoryReason != null) {
+                                setFileInvalid(row, idxFileExists, idxFileMod, idxJarVersion, idxScanError, directoryReason);
+                                processed++;
+                                continue;
+                            } else {
+                                // Fallback: treat as not found with error message
+                                exists = false;
+                            }
                         } else {
-                            // Fallback: treat as not found with error message
+                            // Invalid path detection disabled - treat as not found
                             exists = false;
                         }
                     }
@@ -847,10 +859,10 @@ public class ExcelTool {
         return false;
     }
     
-    private static boolean checkForInvalidPath(String rawPath, Path resolvedPath, boolean isWindows) {
+    private static String checkForInvalidPath(String rawPath, Path resolvedPath, boolean isWindows) {
         // Case 1: Blank/empty path
         if (isBlank(rawPath)) {
-            return true;
+            return "Empty file path";
         }
         
         String trimmedPath = rawPath.trim();
@@ -860,29 +872,38 @@ public class ExcelTool {
         if (lowerPath.equals("n/a") || 
             lowerPath.equals("n\\a") || 
             lowerPath.equals("na")) {
-            return true;
+            return "Path marked as N/A";
         }
         
         // Case 3: Paths containing result.filename patterns
         if (lowerPath.contains(" result.filename=") || lowerPath.contains("result.filename=")) {
-            return true;
+            return "Invalid path format containing result.filename pattern";
         }
         
         // Case 4: Paths starting with "C:\Program Files " (with trailing space)
         if (lowerPath.startsWith("c:\\program files ")) {
-            return true;
+            return "Invalid path format with trailing space after Program Files";
         }
         
         // Case 5: Windows .jar files with spaces in filename (invalid pattern)
-        if (lowerPath.endsWith(".jar") && trimmedPath.contains(" ") && isWindows) {
-            return true;
+        if (lowerPath.endsWith(".jar") && isWindows) {
+            // Extract just the filename after the last slash
+            String filename = trimmedPath;
+            int lastSlash = Math.max(trimmedPath.lastIndexOf('/'), trimmedPath.lastIndexOf('\\'));
+            if (lastSlash >= 0 && lastSlash < trimmedPath.length() - 1) {
+                filename = trimmedPath.substring(lastSlash + 1);
+            }
+            // Only mark invalid if the filename itself (not the path) contains spaces
+            if (filename.contains(" ")) {
+                return "JAR filename contains spaces: " + filename;
+            }
         }
         
         // Case 6: Directory instead of file (if path exists and is accessible)
         if (resolvedPath != null) {
             try {
                 if (Files.exists(resolvedPath) && Files.isDirectory(resolvedPath)) {
-                    return true;
+                    return "Path is a directory, not a file";
                 }
             } catch (Exception e) {
                 // If we can't determine, don't mark as invalid due to directory check
@@ -897,13 +918,13 @@ public class ExcelTool {
         // - Length restrictions
         // - etc.
         
-        return false;
+        return null; // Path is valid
     }
     
-    private static void setFileInvalid(Row row, int idxFileExists, int idxFileMod, int idxJarVersion, int idxScanError) {
+    private static void setFileInvalid(Row row, int idxFileExists, int idxFileMod, int idxJarVersion, int idxScanError, String reason) {
         writeCell(row, idxFileExists, "X");
         writeCell(row, idxFileMod, "");
         writeCell(row, idxJarVersion, "");
-        recordScanError(row, idxScanError, ""); // Clear ScanError - invalid path indicated by FileExists="X"
+        recordScanError(row, idxScanError, reason); // Record specific reason for invalid path
     }
 }

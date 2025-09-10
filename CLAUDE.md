@@ -115,6 +115,7 @@ Edit `config.properties` to set:
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout`: UNC access timeout in seconds (default: 7)
 - `log.filename`: Log file name (optional) - saves console output to hostname-prefixed file (e.g., `HOSTNAME-excel-tool.log`)
+- `invalid.path.detection`: Enable/disable invalid path pattern validation (true/false, default: true)
 
 ### Dependencies
 

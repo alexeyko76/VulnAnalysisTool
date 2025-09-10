@@ -11,7 +11,8 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - `platform.windows` - Windows platform identifiers (comma-separated, supports spaces, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout` - UNC access timeout in seconds (default: 7, prevents infinite hangs)
-- `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file with hostname prefix (e.g., `excel-tool.log` becomes `HOSTNAME-excel-tool.log`)  
+- `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file with hostname prefix (e.g., `excel-tool.log` becomes `HOSTNAME-excel-tool.log`)
+- `invalid.path.detection` - Enable/disable invalid path pattern validation (true/false, default: true)  
 
 ## Processing Steps
 1. Open the Excel file.  
@@ -57,8 +58,15 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - **Enhanced File Validation**: 
      - Uses `Files.exists()` and `Files.notExists()` to differentiate access issues from non-existence
      - Uses `Files.isRegularFile()` to ensure paths point to actual files (not directories)
+     - **Invalid Path Detection**: Configurable validation (`invalid.path.detection=true/false`) that identifies:
+       - Empty or blank file paths
+       - Paths marked as "N/A" or similar placeholder values  
+       - JAR files with spaces in the filename (not directory path)
+       - Paths with trailing spaces after "Program Files"
+       - Directories mistakenly listed as files
+       - Malformed path patterns containing "result.filename=" strings
      - **Error Classifications**:
-       - Invalid/corrupted paths: `FileExists = "X"`, `ScanError = "Empty file path"` or `"Path marked as N/A"` or `"Path is a directory, not a file"`
+       - Invalid/corrupted paths: `FileExists = "X"`, `ScanError = "[specific reason]"` (e.g., "JAR filename contains spaces: file name.jar")
        - Files that genuinely don't exist: `FileExists = "N"`, `ScanError = ""` (cleared for successful scan)
        - Local access permission issues: `FileExists = "N"`, `ScanError = "Access denied - cannot determine file existence"`
        - JAR processing errors: `ScanError = "JAR processing error: [details]"`
