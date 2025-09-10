@@ -72,18 +72,21 @@ public class ExcelTool {
             int remoteUncTimeout = getInteger(cfg, KEY_REMOTE_UNC_TIMEOUT, 30);
             String logFilename = getString(cfg, KEY_LOG_FILENAME, "");
             
-            // Initialize log file if specified
-            initializeLogFile(logFilename);
-
+            // Get hostname first for log file prefixing
             String localHost = getLocalHostName();
+            
+            // Initialize log file with hostname prefix if specified
+            String prefixedLogFilename = createHostnamePrefixedLogFilename(logFilename, localHost);
+            initializeLogFile(prefixedLogFilename);
+            
             logMessage("Local hostname: " + localHost);
             logMessage("Windows platform values: " + windowsPlatforms);
             logMessage("Remote UNC access enabled: " + remoteUncEnabled);
             if (remoteUncEnabled) {
                 logMessage("UNC access timeout: " + remoteUncTimeout + " seconds");
             }
-            if (!isBlank(logFilename)) {
-                logMessage("Log file: " + logFilename);
+            if (!isBlank(prefixedLogFilename)) {
+                logMessage("Log file: " + prefixedLogFilename);
             }
 
             File excelFile = new File(excelPath);
@@ -733,6 +736,42 @@ public class ExcelTool {
             } else {
                 logWriter.println("ERROR: " + message);
             }
+        }
+    }
+    
+    // Create hostname-prefixed log filename
+    private static String createHostnamePrefixedLogFilename(String logFilename, String hostname) {
+        if (isBlank(logFilename)) {
+            return ""; // No log file specified
+        }
+        
+        // Normalize hostname for filename use (remove invalid characters)
+        String normalizedHostname = hostname.replaceAll("[^a-zA-Z0-9.-]", "_");
+        
+        // Extract directory, filename, and extension
+        File logFile = new File(logFilename);
+        String dir = logFile.getParent();
+        String name = logFile.getName();
+        
+        // Split filename and extension
+        int lastDot = name.lastIndexOf('.');
+        String baseName, extension;
+        if (lastDot > 0 && lastDot < name.length() - 1) {
+            baseName = name.substring(0, lastDot);
+            extension = name.substring(lastDot); // includes the dot
+        } else {
+            baseName = name;
+            extension = "";
+        }
+        
+        // Create prefixed filename: hostname-originalname.ext
+        String prefixedName = normalizedHostname + "-" + baseName + extension;
+        
+        // Combine with directory if present
+        if (dir != null) {
+            return new File(dir, prefixedName).getPath();
+        } else {
+            return prefixedName;
         }
     }
     

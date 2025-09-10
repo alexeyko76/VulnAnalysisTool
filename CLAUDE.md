@@ -49,6 +49,12 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 - **Timestamped Logging**: Row-by-row logging with detailed messages and UNC access notifications  
 - **Real-time Updates**: Shows current processing status and file being analyzed
 
+### Hostname-Prefixed Logging System
+- **Automatic Prefixing**: Log filenames automatically include hostname for multi-machine identification
+- **Path Preservation**: Maintains directory structure and file extensions from original configuration
+- **Character Normalization**: Invalid filename characters in hostnames replaced with underscores
+- **Format**: `hostname-originalname.ext` (e.g., `LPRIME-excel-tool.log` from `excel-tool.log`)
+
 ### Error Handling (src/main/java/app/ExcelTool.java:Error columns)
 - **ScanError column**: Automatically created to track local file scanning issues
 - **RemoteScanError column**: Automatically created to track remote UNC scanning issues
@@ -108,7 +114,7 @@ Edit `config.properties` to set:
 - `platform.windows`: Windows platform values (comma-separated, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout`: UNC access timeout in seconds (default: 7)
-- `log.filename`: Log file name (optional) - saves console output to specified file
+- `log.filename`: Log file name (optional) - saves console output to hostname-prefixed file (e.g., `HOSTNAME-excel-tool.log`)
 
 ### Dependencies
 
@@ -153,4 +159,5 @@ Key dependencies:
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
 - **Scan Auditing**: ScanDate column records session start timestamp for all processed hosts (same timestamp for entire scanning session)
 - **Invalid Path Handling**: Extensible system for detecting and marking invalid file paths with "X" in FileExists column
+- **Hostname-Prefixed Logging**: Log files automatically include hostname prefix for multi-machine deployments (e.g., `HOSTNAME-excel-tool.log`)
 - **Maintainability**: Consistent patterns and helper methods improve code readability and reduce maintenance overhead

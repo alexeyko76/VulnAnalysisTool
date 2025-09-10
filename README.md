@@ -11,7 +11,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
 - `platform.windows` - Windows platform identifiers (comma-separated, supports spaces, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout` - UNC access timeout in seconds (default: 7, prevents infinite hangs)
-- `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file  
+- `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file with hostname prefix (e.g., `excel-tool.log` becomes `HOSTNAME-excel-tool.log`)  
 
 ## Processing Steps
 1. Open the Excel file.  
