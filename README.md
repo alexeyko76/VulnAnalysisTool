@@ -1,18 +1,22 @@
 # Java Vulnerability Analysis Tool
 
-A defensive security tool that processes Excel files to analyze file existence, modification dates, and JAR versions across different platforms. Supports both local file analysis and remote Windows file access via UNC paths.
+**Version 2.0.0**
+
+A comprehensive defensive security tool that processes Excel files to analyze file existence, modification dates, and file versions (JAR and EXE) across different platforms. Features include automatic path corruption detection and fixing, duplicate detection system, CVE information sheet creation with NIST NVD integration, Oracle WebLogic vulnerability detection, and support for both local file analysis and remote Windows file access via UNC paths.
 
 **Implementation**: Single Java file, fully compatible with **Java 1.8**.  
 
 ## Configuration (config.properties)
-- `excel.path` - Excel file path  
+- `excel.path` - Excel file path
 - `sheet.name` - Sheet name to process
-- Column names: `PlatformName`, `FilePath`, `HostName`
+- Column names: `PlatformName`, `FilePath`, `HostName`, `CVE`
 - `platform.windows` - Windows platform identifiers (comma-separated, supports spaces, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled` - Enable/disable remote Windows UNC access (true/false)
 - `remote.unc.timeout` - UNC access timeout in seconds (default: 7, prevents infinite hangs)
 - `log.filename` - Log file name (optional) - if specified, console output will also be saved to this file with hostname prefix (e.g., `excel-tool.log` becomes `HOSTNAME-excel-tool.log`)
-- `invalid.path.detection` - Enable/disable invalid path pattern validation (true/false, default: true)  
+- `invalid.path.detection` - Enable/disable invalid path pattern validation (true/false, default: true)
+- `duplicate.search.enabled` - Enable/disable duplicate detection system (true/false, default: false)
+- `cve.sheet.creation.enabled` - Enable/disable CVE information sheet creation with NIST NVD data (true/false, default: false)  
 
 ## Processing Steps
 1. Open the Excel file.  
@@ -23,10 +27,12 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - Ensure the following additional columns exist (create them if missing):  
      - `FileExists`  
      - `FileModificationDate` (readable format: `yyyy-MM-dd HH:mm:ss`)
-     - `JarVersion` (optional, filled only for `.jar` files)
+     - `FileVersion` (optional, filled for `.jar` files on all platforms, `.exe` files on Windows platforms)
      - `ScanError` (captures local file scanning issues or errors)
      - `RemoteScanError` (captures remote UNC access issues, cleared for successful remote scans)
-     - `ScanDate` (timestamp when scanning session started, format: `yyyy-MM-dd HH:mm:ss`)  
+     - `ScanDate` (timestamp when scanning session started, format: `yyyy-MM-dd HH:mm:ss`)
+     - `FixedFilename` (stores corrected file path when path fixing is applied)
+     - `FixedFileExists` (shows existence status of fixed path: Y/N/Error)  
 
 2. Read the Excel file row by row.  
 
@@ -39,22 +45,41 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - **Smart Exclusion**: Hosts that fail UNC access (network errors, timeouts, or permission issues) are added to exclusion list for the current run.
    - **UNC Access Preservation**: When UNC access fails, only the `RemoteScanError` column is updated - existing values in `FileExists`, `FileModificationDate`, and `JarVersion` are preserved.
    - **File Type Validation**: Only processes regular files, excludes directories and special files.
-   - Resolve the `FilePath` value in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).  
-   - Check if the file in the `FilePath` column exists.  
-     - If the file exists:  
-       - Write `"Y"` into the `FileExists` column.  
+   - **Path Processing Workflow**:
+     1. **Try Original Path**: First attempt to find the file using the original path from `FilePath` column
+     2. **Path Corruption Detection**: If original file doesn't exist, check if path contains corrupted patterns
+     3. **Automatic Path Fixing**: If corruption detected, attempt to fix by removing trailing garbage data after first space in filename
+     4. **Fixed Path Validation**: Test the fixed path and record results in `FixedFilename` and `FixedFileExists` columns
+     5. **Metadata Extraction**: Extract file information from whichever file exists (original or fixed)
+   - **Path Fixing Examples**:
+     - `C:\app\tool.exe garbage_data` → `C:\app\tool.exe`
+     - `C:\path\file.jar result.filename=xyz` → `C:\path\file.jar`
+     - `setup.exe version 1.2.3 build` → `setup.exe`
+   - Resolve file paths in a **platform-independent way** (handle both Windows `\` and Linux `/` path formats).
+   - **File Existence Results**:
+     - `FileExists` column: Shows original file status (`Y`=exists, `N`=not found, `X`=invalid/corrupted path)
+     - `FixedFileExists` column: Shows fixed file status when path fixing was applied (`Y`/`N`/`Error`)
+   - **File Analysis**: If a file exists (original or fixed):
        - Write the file's last modified timestamp into the `FileModificationDate` column (format: `yyyy-MM-dd HH:mm:ss`).
-       - If the file has a `.jar` extension:  
-         - Open it as a ZIP archive.  
-         - If it contains `META-INF/MANIFEST.MF`:  
-           - **Robust Parsing**: Uses both Manifest API and manual text parsing as fallback.
-           - Extract the value from the line starting with `Implementation-Version:`.  
-           - Write this value into the `JarVersion` column.
-         - If any JAR processing errors occur, record them in the `ScanError` column.
+       - **File Version Extraction**:
+         - If the file has a `.jar` extension (all platforms):
+           - Open it as a ZIP archive.
+           - If it contains `META-INF/MANIFEST.MF`:
+             - **Robust Parsing**: Uses both Manifest API and manual text parsing as fallback.
+             - Extract the value from the line starting with `Implementation-Version:`.
+             - Write this value into the `FileVersion` column.
+           - If any JAR processing errors occur, record them in the `ScanError` column.
+         - If the file has a `.exe` extension (Windows platforms only):
+           - **PE Header Parsing**: Uses direct binary parsing of Windows PE headers (no external dependencies)
+           - Extracts version information from PE resource section (VS_FIXEDFILEINFO structure)
+           - **UNC Compatible**: Works seamlessly with remote Windows files via UNC paths
+           - Formats version as `major.minor.build.revision` (e.g., `1.2.3.4`)
+           - Write this value into the `FileVersion` column.
+           - If any EXE processing errors occur, record them in the `ScanError` column.
      - If the file does **not** exist:  
        - Write `"N"` into the `FileExists` column.  
        - Clear the `ScanError` column (successful scan - file simply doesn't exist).
-       - Leave `FileModificationDate` and `JarVersion` blank.
+       - Leave `FileModificationDate` and `FileVersion` blank.
    - **Enhanced File Validation**: 
      - Uses `Files.exists()` and `Files.notExists()` to differentiate access issues from non-existence
      - Uses `Files.isRegularFile()` to ensure paths point to actual files (not directories)
@@ -62,7 +87,7 @@ A defensive security tool that processes Excel files to analyze file existence, 
        - Empty or blank file paths
        - Paths marked as "N/A" or similar placeholder values  
        - JAR files with spaces in the filename (not directory path)
-       - Paths with trailing spaces after "Program Files"
+       - Paths with trailing spaces after "Program Files" (exception: "C:\Program Files (x86)" is valid)
        - Directories mistakenly listed as files
        - Malformed path patterns containing "result.filename=" strings
      - **Error Classifications**:
@@ -85,9 +110,34 @@ A defensive security tool that processes Excel files to analyze file existence, 
    - **Timestamped Logging**: Displays timestamped row-by-row logging with detailed messages
    - **Final Summary**: Comprehensive execution summary including:
      - Total rows processed
-     - Rows skipped due to hostname mismatch  
+     - Rows skipped due to hostname mismatch
      - Rows skipped due to inaccessible remote hosts
-     - Complete list of inaccessible hosts identified during the run  
+     - Complete list of inaccessible hosts identified during the run
+
+## CVE Information Sheet Creation
+
+When `cve.sheet.creation.enabled=true`, the tool creates a comprehensive "CVEs" sheet with detailed vulnerability information:
+
+### Features
+- **NIST NVD Integration**: Fetches detailed CVE data from the National Vulnerability Database API v2.0
+- **Weblogic Detection**: Automatically identifies Oracle WebLogic Server vulnerabilities by analyzing CPE configurations
+- **Oracle Advisory Extraction**: Extracts Oracle security advisory URLs from CVE references (supports both HTTP and HTTPS)
+- **Rate Limiting**: Built-in 2-second delays between API requests to respect NIST API limits
+- **Error Handling**: Graceful handling of API errors (404 for missing CVEs, 429 for rate limiting)
+
+### CVE Sheet Columns
+1. **CVE ID**: The CVE identifier
+2. **Description**: Detailed vulnerability description from NIST
+3. **References**: All reference URLs associated with the CVE
+4. **Affected Software**: CPE (Common Platform Enumeration) configurations
+5. **Weblogic**: Y/N flag indicating if this is an Oracle WebLogic Server vulnerability
+6. **Weblogic Sec Advisories**: Oracle security advisory URLs extracted from references
+
+### Usage
+- Set `cve.sheet.creation.enabled=true` in `config.properties`
+- When enabled, only CVE sheet creation occurs (normal file processing is bypassed)
+- Successfully tested with 15+ real WebLogic CVEs from 2020-2024
+- Handles real-world data including escaped JSON URLs and Oracle advisory extraction
 
 ## Recommended Libraries
 - **Apache POI** – for reading and writing Excel files.  
