@@ -36,7 +36,7 @@ import java.util.regex.Matcher;
 public class ExcelTool {
 
     // Version information
-    private static final String VERSION = "2.0.0";
+    private static final String VERSION = "3.0.0";
 
     // Config keys
     private static final String KEY_EXCEL_PATH = "excel.path";
@@ -52,6 +52,7 @@ public class ExcelTool {
     private static final String KEY_INVALID_PATH_DETECTION = "invalid.path.detection";
     private static final String KEY_DUPLICATE_SEARCH_ENABLED = "duplicate.search.enabled";
     private static final String KEY_CVE_SHEET_CREATION_ENABLED = "cve.sheet.creation.enabled";
+    private static final String KEY_PATH_REPLACEMENTS = "path.replacements";
 
     // Additional columns to ensure exist
     private static final String COL_FILE_EXISTS = "FileExists";
@@ -61,10 +62,11 @@ public class ExcelTool {
     private static final String COL_REMOTE_SCAN_ERROR = "RemoteScanError";
     private static final String COL_LOCAL_SCAN_DATE = "LocalScanDate";
     private static final String COL_REMOTE_SCAN_DATE = "RemoteScanDate";
-    private static final String COL_FIXED_FILENAME = "FixedFilename";
-    private static final String COL_FIXED_FILE_EXISTS = "FixedFileExists";
+    private static final String COL_FIXED_FILEPATH = "FixedFilePath";
+    private static final String COL_FIXED = "IsFixed";
     private static final String COL_UNIQUE_ID = "UniqueID";
     private static final String COL_DUPLICATE = "Duplicate";
+    private static final String COL_IS_INVALID_PATH = "IsInvalidPath";
 
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     
@@ -91,6 +93,7 @@ public class ExcelTool {
             boolean invalidPathDetection = getBoolean(cfg, KEY_INVALID_PATH_DETECTION, true);
             boolean duplicateSearchEnabled = getBoolean(cfg, KEY_DUPLICATE_SEARCH_ENABLED, false);
             boolean cveSheetCreationEnabled = getBoolean(cfg, KEY_CVE_SHEET_CREATION_ENABLED, false);
+            Map<String, String> pathReplacements = parsePathReplacements(getString(cfg, KEY_PATH_REPLACEMENTS, ""));
             
             // Get hostname first for log file prefixing
             String localHost = getLocalHostName();
@@ -175,10 +178,11 @@ public class ExcelTool {
                 ensureColumn(header, colIndex, COL_REMOTE_SCAN_ERROR);
                 ensureColumn(header, colIndex, COL_LOCAL_SCAN_DATE);
                 ensureColumn(header, colIndex, COL_REMOTE_SCAN_DATE);
-                ensureColumn(header, colIndex, COL_FIXED_FILENAME);
-                ensureColumn(header, colIndex, COL_FIXED_FILE_EXISTS);
+                ensureColumn(header, colIndex, COL_FIXED_FILEPATH);
+                ensureColumn(header, colIndex, COL_FIXED);
                 ensureColumn(header, colIndex, COL_UNIQUE_ID);
                 ensureColumn(header, colIndex, COL_DUPLICATE);
+                ensureColumn(header, colIndex, COL_IS_INVALID_PATH);
 
                 int idxPlatform = colIndex.get(colPlatform);
                 int idxFilePath = colIndex.get(colFilePath);
@@ -191,10 +195,11 @@ public class ExcelTool {
                 int idxRemoteScanError = colIndex.get(COL_REMOTE_SCAN_ERROR);
                 int idxLocalScanDate = colIndex.get(COL_LOCAL_SCAN_DATE);
                 int idxRemoteScanDate = colIndex.get(COL_REMOTE_SCAN_DATE);
-                int idxFixedFilename = colIndex.get(COL_FIXED_FILENAME);
-                int idxFixedFileExists = colIndex.get(COL_FIXED_FILE_EXISTS);
+                int idxFixedFilePath = colIndex.get(COL_FIXED_FILEPATH);
+                int idxFixed = colIndex.get(COL_FIXED);
                 int idxUniqueID = colIndex.get(COL_UNIQUE_ID);
                 int idxDuplicate = colIndex.get(COL_DUPLICATE);
+                int idxIsInvalidPath = colIndex.get(COL_IS_INVALID_PATH);
 
                 int processed = 0;
                 int skippedHost = 0;
@@ -212,37 +217,25 @@ public class ExcelTool {
                 // Progress tracking
                 int totalRows = sheet.getLastRowNum();
                 
-                // Phase 1: Duplicate detection for ALL rows (if enabled)
-                if (duplicateSearchEnabled) {
-                    logMessage("Phase 1: Processing duplicate detection for " + totalRows + " rows:");
-                    for (int r = 1; r <= sheet.getLastRowNum(); r++) {
-                        Row row = sheet.getRow(r);
-                        if (row == null) continue;
+                // NEW STREAMLINED PROCESSING LOGIC
 
-                        String targetHost = getStringCell(row, idxHostName);
-                        String cveValue = getStringCell(row, idxCVE);
-                        String rawPath = getStringCell(row, idxFilePath);
+                // Pass 1: Path fixing and special replacements for ALL rows
+                logMessage("Pass 1: Path fixing and special replacements for " + totalRows + " rows:");
+                for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
 
-                        // Generate initial UniqueID (may be updated later if path gets fixed)
-                        String uniqueID = generateUniqueID(targetHost, cveValue, rawPath, "");
-                        writeCell(row, idxUniqueID, uniqueID);
+                    String rawPath = getStringCell(row, idxFilePath);
+                    String targetPlatform = getStringCell(row, idxPlatform);
+                    boolean isWindowsPlatform = !isBlank(targetPlatform) && isWindowsPlatformMatch(targetPlatform, windowsPlatforms);
 
-                        // Check for duplicates and set Duplicate column
-                        boolean isDuplicate = uniqueIDMap.containsKey(uniqueID);
-                        writeCell(row, idxDuplicate, isDuplicate ? "Y" : "N");
-                        uniqueIDMap.put(uniqueID, true);
-                    }
-                } else {
-                    // Clear duplicate detection columns when disabled
-                    for (int r = 1; r <= sheet.getLastRowNum(); r++) {
-                        Row row = sheet.getRow(r);
-                        if (row == null) continue;
-                        writeCell(row, idxUniqueID, "");
-                        writeCell(row, idxDuplicate, "");
-                    }
+                    // Perform path fixing and write results directly
+                    String[] pathFixResults = performPathFixing(rawPath, pathReplacements, isWindowsPlatform);
+                    writeCells(row, new int[]{idxFixedFilePath, idxFixed}, pathFixResults);
                 }
 
-                logMessage("Phase 2: Processing file operations for " + totalRows + " rows:");
+                // Pass 2: File operations using FixedFilePath for hostname scope
+                logMessage("Pass 2: File operations for hostname scope rows:");
 
                 for (int r = 1; r <= sheet.getLastRowNum(); r++) {
                     Row row = sheet.getRow(r);
@@ -260,219 +253,150 @@ public class ExcelTool {
                         continue;
                     }
                     
-                    // Record scan timestamp for hosts that will be processed
-                    if (isLocalHost) {
-                        writeCell(row, idxLocalScanDate, sessionScanTimestamp);
-                    } else if (isRemoteWindows) {
-                        writeCell(row, idxRemoteScanDate, sessionScanTimestamp);
-                    }
-                    
                     // Skip if remote host is in exclusion list (but update RemoteScanError for this row)
                     if (isRemoteWindows && inaccessibleHosts.contains(normalizeHostname(targetHost))) {
-                        recordRemoteScanError(row, idxRemoteScanError, "Host previously identified as inaccessible via UNC");
+                        // Remote scan: clear local, set remote with error
+                        writeCells(row, new int[]{idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                 new String[]{"", sessionScanTimestamp, "", "Host previously identified as inaccessible via UNC"});
                         skippedRemote++;
                         continue;
                     }
 
-                    String rawPath = getStringCell(row, idxFilePath);
+                    // Use FixedFilePath from Pass 1
+                    String fixedPath = getStringCell(row, idxFixedFilePath);
 
-                    // Initialize fixed path columns
-                    writeCell(row, idxFixedFilename, "");
-                    writeCell(row, idxFixedFileExists, "");
+                    // Process file using fixed path
+                    FileProcessingResult result = processFilePath(fixedPath, targetHost, isRemoteWindows,
+                                                                isWindowsPlatform, r, totalRows,
+                                                                inaccessibleHosts, remoteUncTimeout);
 
-                    // Step 1: First try the original path
-                    FileProcessingResult originalResult = processFilePath(rawPath, targetHost, isRemoteWindows,
-                                                                        isWindowsPlatform, r, totalRows,
-                                                                        inaccessibleHosts, remoteUncTimeout);
-
-                    if (originalResult.shouldSkip) {
-                        if (originalResult.isRemoteSkip) {
+                    if (result.shouldSkip) {
+                        if (result.isRemoteSkip) {
                             skippedRemote++;
                         } else {
                             processed++;
                         }
-                        if (originalResult.errorMessage != null) {
-                            if (originalResult.isRemoteError) {
-                                recordRemoteScanError(row, idxRemoteScanError, originalResult.errorMessage);
+                        if (result.errorMessage != null) {
+                            if (result.isRemoteError) {
+                                // Remote error: clear local, set remote with error
+                                writeCells(row, new int[]{idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                         new String[]{"", sessionScanTimestamp, "", result.errorMessage});
                             } else {
-                                recordScanError(row, idxScanError, originalResult.errorMessage);
+                                // Local error: set local with error, clear remote
+                                writeCells(row, new int[]{idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                         new String[]{sessionScanTimestamp, "", result.errorMessage, ""});
                             }
                         }
                         continue;
                     }
 
-                    boolean originalExists = originalResult.exists;
-                    Path originalResolved = originalResult.resolvedPath;
+                    // Update FileExists column
+                    writeCell(row, idxFileExists, result.exists ? "Y" : "N");
 
-                    // Step 2: Always attempt path fixing to provide FixedFileExists information
-                    boolean useFixedPath = false;
-                    FileProcessingResult fixedResult = null;
-
-                    if (invalidPathDetection) {
-                        PathFixResult pathFixResult = attemptPathFix(rawPath, isWindowsPlatform);
-
-                        if (pathFixResult.errorReason != null && !pathFixResult.wasFixed) {
-                            // Path is corrupted and cannot be fixed
-                            if (!originalExists) {
-                                // Only mark as invalid if original also doesn't exist
-                                writeCell(row, idxFileExists, "X");
-                                writeCell(row, idxFileMod, "");
-                                writeCell(row, idxFileVersion, "");
-                                recordScanError(row, idxScanError, pathFixResult.errorReason);
-                                processed++;
-                                continue;
-                            }
-                            // If original exists but path has corruption patterns, keep original result
-                        } else if (pathFixResult.wasFixed) {
-                            // Path was fixed - always test the fixed path for FixedFileExists
-                            writeCell(row, idxFixedFilename, pathFixResult.fixedPath);
-
-                            fixedResult = processFilePath(pathFixResult.fixedPath, targetHost, isRemoteWindows,
-                                                        isWindowsPlatform, r, totalRows,
-                                                        inaccessibleHosts, remoteUncTimeout);
-
-                            if (fixedResult.shouldSkip) {
-                                writeCell(row, idxFixedFileExists, "Error");
-                                if (fixedResult.errorMessage != null) {
-                                    if (fixedResult.isRemoteError) {
-                                        recordRemoteScanError(row, idxRemoteScanError, "Fixed path: " + fixedResult.errorMessage);
-                                    } else {
-                                        recordScanError(row, idxScanError, "Fixed path: " + fixedResult.errorMessage);
-                                    }
-                                }
-                            } else {
-                                writeCell(row, idxFixedFileExists, fixedResult.exists ? "Y" : "N");
-                                // Use fixed path for metadata extraction only if original doesn't exist
-                                if (!originalExists && fixedResult.exists) {
-                                    useFixedPath = true;
-                                }
-                            }
-                        } else {
-                            // Path is already valid, but always check if there's a potential fix
-                            String potentialFixedPath = tryRemoveTrailingSuffix(rawPath.trim());
-                            if (potentialFixedPath != null && !potentialFixedPath.equals(rawPath.trim())) {
-                                // There was a potential fix, test it for FixedFileExists
-                                writeCell(row, idxFixedFilename, potentialFixedPath);
-
-                                FileProcessingResult potentialResult = processFilePath(potentialFixedPath, targetHost, isRemoteWindows,
-                                                                    isWindowsPlatform, r, totalRows,
-                                                                    inaccessibleHosts, remoteUncTimeout);
-
-                                if (potentialResult.shouldSkip) {
-                                    writeCell(row, idxFixedFileExists, "Error");
-                                } else {
-                                    writeCell(row, idxFixedFileExists, potentialResult.exists ? "Y" : "N");
-                                }
-                            } else {
-                                // No potential fix available - FixedFileExists should be same as original
-                                writeCell(row, idxFixedFileExists, originalExists ? "Y" : "N");
-                            }
-                        }
-                    } else {
-                        // Invalid path detection is disabled - always try potential path fix for FixedFileExists
-                        String potentialFixedPath = tryRemoveTrailingSuffix(rawPath.trim());
-                        if (potentialFixedPath != null && !potentialFixedPath.equals(rawPath.trim())) {
-                            // There was a potential fix, test it for FixedFileExists
-                            writeCell(row, idxFixedFilename, potentialFixedPath);
-
-                            FileProcessingResult potentialResult = processFilePath(potentialFixedPath, targetHost, isRemoteWindows,
-                                                                isWindowsPlatform, r, totalRows,
-                                                                inaccessibleHosts, remoteUncTimeout);
-
-                            if (potentialResult.shouldSkip) {
-                                writeCell(row, idxFixedFileExists, "Error");
-                            } else {
-                                writeCell(row, idxFixedFileExists, potentialResult.exists ? "Y" : "N");
-                            }
-                        } else {
-                            // No potential fix available - FixedFileExists should be same as original
-                            writeCell(row, idxFixedFileExists, originalExists ? "Y" : "N");
-                        }
-                    }
-
-                    // Step 3: Determine which file to process for metadata extraction
-                    Path resolvedForMetadata;
-                    boolean existsForMetadata;
-
-                    if (useFixedPath && fixedResult != null) {
-                        resolvedForMetadata = fixedResult.resolvedPath;
-                        existsForMetadata = fixedResult.exists;
-                        writeCell(row, idxFileExists, originalExists ? "Y" : "N"); // Original file status
-                    } else {
-                        resolvedForMetadata = originalResolved;
-                        existsForMetadata = originalExists;
-                        writeCell(row, idxFileExists, originalExists ? "Y" : "N");
-                    }
-
-                    // Update UniqueID with the correct file path (if duplicate search is enabled)
-                    if (duplicateSearchEnabled) {
-                        String cveValue = getStringCell(row, idxCVE);
-                        String fixedFilename = getStringCell(row, idxFixedFilename);
-                        String updatedUniqueID = generateUniqueID(targetHost, cveValue, rawPath, fixedFilename);
-
-                        // Always update the UniqueID with the corrected path
-                        writeCell(row, idxUniqueID, updatedUniqueID);
-                    }
-
-                    // Step 4: Extract metadata (modification date and version) if file exists
-                    if (existsForMetadata) {
+                    // Extract metadata if file exists
+                    if (result.exists) {
                         StringBuilder scanErrors = new StringBuilder();
 
+                        // Modification date
                         try {
-                            Instant lm = Files.getLastModifiedTime(resolvedForMetadata).toInstant();
+                            Instant lm = Files.getLastModifiedTime(result.resolvedPath).toInstant();
                             ZonedDateTime zdt = ZonedDateTime.ofInstant(lm, ZoneId.systemDefault());
                             writeCell(row, idxFileMod, TS_FMT.format(zdt.toLocalDateTime()));
                         } catch (IOException e) {
                             writeCell(row, idxFileMod, "");
                             scanErrors.append("Cannot read modification date: ").append(e.getMessage());
-                            logError("WARN: Could not read last modified for: " + resolvedForMetadata + " -> " + e.getMessage());
                         }
 
-                        // File version handling (JAR and EXE files)
-                        if (resolvedForMetadata.getFileName() != null) {
-                            FileVersionResult result = extractFileVersion(resolvedForMetadata.toFile(), isWindowsPlatform);
-                            writeCell(row, idxFileVersion, result.version != null ? result.version : "");
-                            if (result.error != null) {
-                                if (scanErrors.length() > 0) scanErrors.append("; ");
-                                scanErrors.append("File version processing error: ").append(result.error);
+                        // File version
+                        try {
+                            FileVersionResult versionResult = extractFileVersion(result.resolvedPath.toFile(), isWindowsPlatform);
+                            writeCell(row, idxFileVersion, versionResult.version != null ? versionResult.version : "");
+
+                            if (versionResult.error != null) {
+                                if (scanErrors.length() > 0) {
+                                    scanErrors.append("; ");
+                                }
+                                scanErrors.append("Version extraction: ").append(versionResult.error);
                             }
-                        } else {
+                        } catch (Exception e) {
                             writeCell(row, idxFileVersion, "");
+                            if (scanErrors.length() > 0) {
+                                scanErrors.append("; ");
+                            }
+                            scanErrors.append("Version extraction failed: ").append(e.getMessage());
                         }
 
-                        // Write scan errors or clear if none
-                        writeCell(row, idxScanError, scanErrors.length() > 0 ? scanErrors.toString() : "");
+                        // Set scan results for successful file processing
+                        if (isRemoteWindows) {
+                            // Remote scan: clear local, set remote
+                            writeCells(row, new int[]{idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                     new String[]{"", sessionScanTimestamp,
+                                                 scanErrors.length() > 0 ? scanErrors.toString() : "", ""});
+                        } else {
+                            // Local scan: set local, clear remote
+                            writeCells(row, new int[]{idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                     new String[]{sessionScanTimestamp, "",
+                                                 scanErrors.length() > 0 ? scanErrors.toString() : "", ""});
+                        }
                     } else {
-                        writeCell(row, idxFileMod, "");
-                        writeCell(row, idxFileVersion, "");
-                        // Clear ScanError for successful determination that file doesn't exist
-                        if (!isRemoteWindows) {
-                            recordScanError(row, idxScanError, ""); // Clear error for successful scan
+                        // File does not exist - clear file data and set scan results
+                        if (isRemoteWindows) {
+                            // Remote scan: clear local, set remote, clear file data
+                            writeCells(row, new int[]{idxFileMod, idxFileVersion, idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                     new String[]{"", "", "", sessionScanTimestamp, "", ""});
+                        } else {
+                            // Local scan: set local, clear remote, clear file data
+                            writeCells(row, new int[]{idxFileMod, idxFileVersion, idxLocalScanDate, idxRemoteScanDate, idxScanError, idxRemoteScanError},
+                                     new String[]{"", "", sessionScanTimestamp, "", "", ""});
                         }
                     }
-
-                    // Clear error columns for successful scans
-                    clearScanErrors(row, idxScanError, idxRemoteScanError, isRemoteWindows);
 
                     processed++;
                 }
 
-                // Phase 3: Rebuild duplicate detection with corrected UniqueIDs (if enabled)
+                // Pass 3: Duplicate detection using FixedFilePath
                 if (duplicateSearchEnabled) {
-                    logMessage("Phase 3: Rebuilding duplicate detection with corrected paths:");
-                    uniqueIDMap.clear(); // Clear the map to rebuild it
+                    logMessage("Pass 3: Duplicate detection for " + totalRows + " rows:");
 
                     for (int r = 1; r <= sheet.getLastRowNum(); r++) {
                         Row row = sheet.getRow(r);
                         if (row == null) continue;
 
-                        String currentUniqueID = getStringCell(row, idxUniqueID);
-                        if (!isBlank(currentUniqueID)) {
-                            // Check for duplicates with the final UniqueID
-                            boolean isDuplicate = uniqueIDMap.containsKey(currentUniqueID);
-                            writeCell(row, idxDuplicate, isDuplicate ? "Y" : "N");
-                            uniqueIDMap.put(currentUniqueID, true);
+                        String targetHost = getStringCell(row, idxHostName);
+                        String cveValue = getStringCell(row, idxCVE);
+                        String fixedFilePath = getStringCell(row, idxFixedFilePath);
+
+                        // Generate unique ID using FixedFilePath
+                        String uniqueID = generateUniqueID(targetHost, cveValue, fixedFilePath, "");
+                        String duplicateStatus = uniqueIDMap.containsKey(uniqueID) ? "Y" : "N";
+
+                        // Write UniqueID and Duplicate columns
+                        writeCells(row, new int[]{idxUniqueID, idxDuplicate}, new String[]{uniqueID, duplicateStatus});
+
+                        if (!uniqueIDMap.containsKey(uniqueID)) {
+                            uniqueIDMap.put(uniqueID, true);
                         }
+                    }
+                }
+
+                // Pass 4: Invalid path detection
+                if (invalidPathDetection) {
+                    logMessage("Pass 4: Invalid path detection for " + totalRows + " rows:");
+
+                    for (int r = 1; r <= sheet.getLastRowNum(); r++) {
+                        Row row = sheet.getRow(r);
+                        if (row == null) continue;
+
+                        String fixedPath = getStringCell(row, idxFixedFilePath);
+
+                        // Check for invalid patterns like "N/A"
+                        boolean isInvalid = isBlank(fixedPath) ||
+                                          fixedPath.trim().equalsIgnoreCase("N/A") ||
+                                          fixedPath.trim().equalsIgnoreCase("N\\A");
+
+                        // Write IsInvalidPath and conditionally FileExists
+                        writeCells(row, new int[]{idxIsInvalidPath, idxFileExists},
+                                 new String[]{isInvalid ? "Y" : "N", isInvalid ? "X" : getStringCell(row, idxFileExists)});
                     }
                 }
 
@@ -620,6 +544,15 @@ public class ExcelTool {
         c.setCellValue(value == null ? "" : value);
     }
 
+    private static void writeCells(Row row, int[] columnIndexes, String[] values) {
+        if (columnIndexes.length != values.length) {
+            throw new IllegalArgumentException("Column indexes and values arrays must have the same length");
+        }
+        for (int i = 0; i < columnIndexes.length; i++) {
+            writeCell(row, columnIndexes[i], values[i]);
+        }
+    }
+
     private static boolean isBlank(String s) {
         return s == null || s.trim().isEmpty();
     }
@@ -725,97 +658,6 @@ public class ExcelTool {
             return new FileVersionResult(null, "EXE file does not exist");
         }
 
-        // Use pure Java PE parsing - works with UNC paths and is much faster
-        return extractExeVersionUsingPEHeaders(exeFile);
-    }
-
-    private static FileVersionResult extractExeVersionUsingSystem(File exeFile) {
-        try {
-            // Use PowerShell Get-ItemProperty which is more reliable
-            String filePath = exeFile.getAbsolutePath();
-            ProcessBuilder pb = new ProcessBuilder(
-                "powershell.exe", "-Command",
-                "(Get-ItemProperty '" + filePath + "').VersionInfo.FileVersion"
-            );
-
-            Process process = pb.start();
-            StringBuilder output = new StringBuilder();
-            StringBuilder errorOutput = new StringBuilder();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line.trim());
-                }
-            }
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    errorOutput.append(line.trim()).append(" ");
-                }
-            }
-
-            int exitCode = process.waitFor();
-
-            if (exitCode == 0) {
-                String version = output.toString().trim();
-                if (!version.isEmpty() && !version.equals("null") && !version.equals("")) {
-                    return new FileVersionResult(version, null);
-                } else {
-                    logError("DEBUG: PowerShell returned empty version for: " + filePath + " (output: '" + version + "')");
-                }
-            } else {
-                logError("DEBUG: PowerShell failed for: " + filePath + " (exit code: " + exitCode + ", error: " + errorOutput.toString() + ")");
-            }
-
-            // If PowerShell fails, try WMIC as fallback
-            return extractExeVersionUsingWMIC(exeFile);
-
-        } catch (Exception e) {
-            // If PowerShell fails, try WMIC as fallback
-            return extractExeVersionUsingWMIC(exeFile);
-        }
-    }
-
-    private static FileVersionResult extractExeVersionUsingWMIC(File exeFile) {
-        try {
-            // Use wmic to get file version information
-            ProcessBuilder pb = new ProcessBuilder(
-                "wmic", "datafile",
-                "where", "name='" + exeFile.getAbsolutePath().replace("\\", "\\\\") + "'",
-                "get", "Version", "/format:list"
-            );
-
-            Process process = pb.start();
-            StringBuilder output = new StringBuilder();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    if (line.startsWith("Version=") && !line.equals("Version=")) {
-                        String version = line.substring("Version=".length()).trim();
-                        if (!version.isEmpty() && !version.equals("null")) {
-                            return new FileVersionResult(version, null);
-                        }
-                    }
-                }
-            }
-
-            int exitCode = process.waitFor();
-            if (exitCode != 0) {
-                return new FileVersionResult(null, "Both PowerShell and WMIC failed to extract version");
-            }
-
-            return new FileVersionResult(null, "No version found using system methods");
-
-        } catch (Exception e) {
-            return new FileVersionResult(null, "System version extraction error: " + e.getMessage());
-        }
-    }
-
-    private static FileVersionResult extractExeVersionUsingPEHeaders(File exeFile) {
         try (RandomAccessFile raf = new RandomAccessFile(exeFile, "r")) {
 
             // Simple brute-force approach: scan the entire file for VS_FIXEDFILEINFO signature
@@ -876,47 +718,62 @@ public class ExcelTool {
                ((buffer[offset + 3] & 0xFF) << 24);
     }
 
-    private static int readLittleEndianShort(byte[] buffer, int offset) {
-        return (buffer[offset] & 0xFF) |
-               ((buffer[offset + 1] & 0xFF) << 8);
-    }
     
     private static String parseManifestManually(ZipFile zip, ZipEntry entry) {
         try (InputStream is = zip.getInputStream(entry);
              BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
-            
+
             String line;
             StringBuilder continuation = new StringBuilder();
-            
+            String implementationVersion = null;
+            String bundleVersion = null;
+
             while ((line = reader.readLine()) != null) {
                 // Handle line continuation (lines starting with space)
                 if (line.startsWith(" ") || line.startsWith("\t")) {
                     continuation.append(line.substring(1));
                     continue;
                 }
-                
+
                 // Process the complete line (previous + current)
                 String completeLine = continuation.toString();
                 continuation.setLength(0);
                 continuation.append(line);
-                
+
                 if (completeLine.startsWith("Implementation-Version:")) {
                     String version = completeLine.substring("Implementation-Version:".length()).trim();
                     if (!version.isEmpty()) {
-                        return version;
+                        implementationVersion = version;
+                    }
+                } else if (completeLine.startsWith("Bundle-Version:")) {
+                    String version = completeLine.substring("Bundle-Version:".length()).trim();
+                    if (!version.isEmpty()) {
+                        bundleVersion = version;
                     }
                 }
             }
-            
+
             // Check the last line
             String lastLine = continuation.toString();
             if (lastLine.startsWith("Implementation-Version:")) {
                 String version = lastLine.substring("Implementation-Version:".length()).trim();
                 if (!version.isEmpty()) {
-                    return version;
+                    implementationVersion = version;
+                }
+            } else if (lastLine.startsWith("Bundle-Version:")) {
+                String version = lastLine.substring("Bundle-Version:".length()).trim();
+                if (!version.isEmpty()) {
+                    bundleVersion = version;
                 }
             }
-            
+
+            // Return Implementation-Version if found, otherwise Bundle-Version
+            if (implementationVersion != null) {
+                return implementationVersion;
+            } else if (bundleVersion != null) {
+                return bundleVersion;
+            }
+
         } catch (IOException e) {
             logError("WARN: Failed to manually parse manifest: " + e.getMessage());
         }
@@ -941,26 +798,19 @@ public class ExcelTool {
     private static class UncAccessResult {
         boolean exists = false;
         boolean timedOut = false;
-        boolean accessDenied = false;
         Exception exception = null;
-        
+
         UncAccessResult(boolean exists) {
             this.exists = exists;
         }
-        
+
         UncAccessResult(Exception exception) {
             this.exception = exception;
         }
-        
+
         static UncAccessResult timeout() {
             UncAccessResult result = new UncAccessResult(false);
             result.timedOut = true;
-            return result;
-        }
-        
-        static UncAccessResult accessDenied() {
-            UncAccessResult result = new UncAccessResult(false);
-            result.accessDenied = true;
             return result;
         }
     }
@@ -1085,45 +935,6 @@ public class ExcelTool {
         }
     }
     
-    // Standardized error handling methods
-    private static void recordScanError(Row row, int idxScanError, String errorMessage) {
-        writeCell(row, idxScanError, errorMessage);
-    }
-    
-    private static void recordRemoteScanError(Row row, int idxRemoteScanError, String errorMessage) {
-        writeCell(row, idxRemoteScanError, errorMessage);
-    }
-    
-    private static void clearScanErrors(Row row, int idxScanError, int idxRemoteScanError, boolean isRemoteWindows) {
-        if (isRemoteWindows) {
-            writeCell(row, idxRemoteScanError, "");
-        } else {
-            writeCell(row, idxScanError, "");
-        }
-    }
-    
-    private static void addHostToExclusionList(Set<String> inaccessibleHosts, String hostname, 
-                                              Row row, int idxRemoteScanError, String reason) {
-        String normalizedHostname = normalizeHostname(hostname);
-        inaccessibleHosts.add(normalizedHostname);
-        recordRemoteScanError(row, idxRemoteScanError, reason);
-        printVerboseMessage("Added " + hostname.trim() + " to exclusion list - " + getReasonForLogging(reason));
-    }
-    
-    private static String getReasonForLogging(String reason) {
-        if (reason.contains("timeout")) return "UNC access timeout";
-        if (reason.contains("access denied")) return "access denied detected";
-        if (reason.contains("Cannot access")) return "UNC access failed";
-        return reason.toLowerCase();
-    }
-    
-    private static void setFileNotFound(Row row, int idxFileExists, int idxFileMod, int idxFileVersion) {
-        writeCell(row, idxFileExists, "N");
-        writeCell(row, idxFileMod, "");
-        writeCell(row, idxFileVersion, "");
-        // Note: FixedFilename is handled separately in the main processing logic
-    }
-    
     // Helper method for hostname normalization to reduce repeated toLowerCase() calls
     private static String normalizeHostname(String hostname) {
         return isBlank(hostname) ? "" : hostname.trim().toLowerCase();
@@ -1182,99 +993,6 @@ public class ExcelTool {
         }
     }
 
-    private static class PathFixResult {
-        String fixedPath;
-        String errorReason;
-        boolean wasFixed;
-
-        PathFixResult(String fixedPath, String errorReason, boolean wasFixed) {
-            this.fixedPath = fixedPath;
-            this.errorReason = errorReason;
-            this.wasFixed = wasFixed;
-        }
-
-        static PathFixResult noFixNeeded(String originalPath) {
-            return new PathFixResult(originalPath, null, false);
-        }
-
-        static PathFixResult fixed(String fixedPath) {
-            return new PathFixResult(fixedPath, null, true);
-        }
-
-        static PathFixResult invalid(String errorReason) {
-            return new PathFixResult(null, errorReason, false);
-        }
-    }
-
-    private static PathFixResult attemptPathFix(String rawPath, boolean isWindows) {
-        // Case 1: Blank/empty path - cannot fix
-        if (isBlank(rawPath)) {
-            return PathFixResult.invalid("Empty file path");
-        }
-
-        String trimmedPath = rawPath.trim();
-        String lowerPath = trimmedPath.toLowerCase();
-
-        // Case 2: Specific invalid patterns that cannot be fixed
-        if (lowerPath.equals("n/a") || lowerPath.equals("n\\a") || lowerPath.equals("na")) {
-            return PathFixResult.invalid("Path marked as N/A");
-        }
-
-        // Case 3: Try to fix paths with trailing suffixes
-        // Look for patterns like "C:\path\file.exe some_suffix_here"
-        String fixedPath = tryRemoveTrailingSuffix(trimmedPath);
-        if (fixedPath != null && !fixedPath.equals(trimmedPath)) {
-            // Check if the fixed path is now valid
-            String fixedInvalidReason = checkForInvalidPath(fixedPath, null, isWindows);
-            if (fixedInvalidReason == null) {
-                return PathFixResult.fixed(fixedPath);
-            }
-            // Fixed path is still invalid, continue with original validation
-        }
-
-        // No fix was possible or fix didn't help - check if original path is valid
-        String originalInvalidReason = checkForInvalidPath(rawPath, null, isWindows);
-        if (originalInvalidReason == null) {
-            return PathFixResult.noFixNeeded(rawPath);
-        } else {
-            return PathFixResult.invalid(originalInvalidReason);
-        }
-    }
-
-    private static String tryRemoveTrailingSuffix(String path) {
-        // Separate file path and file name
-        int lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-
-        if (lastSlash >= 0 && lastSlash < path.length() - 1) {
-            // Path has directory component
-            String dirPath = path.substring(0, lastSlash + 1); // Include the slash
-            String fileName = path.substring(lastSlash + 1);
-
-            // Only attempt to fix if the filename has an extension (contains a dot)
-            // This prevents fixing valid directory names like "Program Files"
-            if (fileName.contains(".")) {
-                // Check if filename contains space
-                int spaceIndex = fileName.indexOf(' '); // Find FIRST space in filename
-                if (spaceIndex > 0) {
-                    // Truncate filename at the FIRST space (including the space)
-                    String cleanFileName = fileName.substring(0, spaceIndex);
-                    return dirPath + cleanFileName;
-                }
-            }
-        } else {
-            // Path is just a filename (no directory)
-            // Only attempt to fix if it looks like a filename with extension
-            if (path.contains(".")) {
-                int spaceIndex = path.indexOf(' '); // Find FIRST space in filename
-                if (spaceIndex > 0) {
-                    // Truncate at the FIRST space (including the space)
-                    return path.substring(0, spaceIndex);
-                }
-            }
-        }
-
-        return null; // No fix possible (no space found in filename or no extension)
-    }
 
     private static FileProcessingResult processFilePath(String filePath, String targetHost, boolean isRemoteWindows,
                                                        boolean isWindowsPlatform, int currentRow, int totalRows,
@@ -1311,7 +1029,7 @@ public class ExcelTool {
 
                     exists = result.exists;
                     // For UNC paths, also check if we can determine file existence
-                    if (!exists && !result.accessDenied) {
+                    if (!exists) {
                         boolean notExists = Files.notExists(resolved);
                         if (!notExists) {
                             String normalizedHostname = normalizeHostname(targetHost);
@@ -1370,77 +1088,6 @@ public class ExcelTool {
         }
     }
 
-
-    private static String checkForInvalidPath(String rawPath, Path resolvedPath, boolean isWindows) {
-        // Case 1: Blank/empty path
-        if (isBlank(rawPath)) {
-            return "Empty file path";
-        }
-        
-        String trimmedPath = rawPath.trim();
-        String lowerPath = trimmedPath.toLowerCase();
-        
-        // Case 2: Specific invalid path patterns
-        if (lowerPath.equals("n/a") || 
-            lowerPath.equals("n\\a") || 
-            lowerPath.equals("na")) {
-            return "Path marked as N/A";
-        }
-        
-        // Case 3: Paths containing result.filename patterns
-        if (lowerPath.contains(" result.filename=") || lowerPath.contains("result.filename=")) {
-            return "Invalid path format containing result.filename pattern";
-        }
-        
-        // Case 4: Paths starting with "C:\Program Files " (with trailing space)
-        // Exception: "C:\Program Files (x86)" is valid
-        if (lowerPath.startsWith("c:\\program files ") && !lowerPath.startsWith("c:\\program files (x86)")) {
-            return "Invalid path format with trailing space after Program Files";
-        }
-        
-        // Case 5: Windows .jar files with spaces in filename (invalid pattern)
-        if (lowerPath.endsWith(".jar") && isWindows) {
-            // Extract just the filename after the last slash
-            String filename = trimmedPath;
-            int lastSlash = Math.max(trimmedPath.lastIndexOf('/'), trimmedPath.lastIndexOf('\\'));
-            if (lastSlash >= 0 && lastSlash < trimmedPath.length() - 1) {
-                filename = trimmedPath.substring(lastSlash + 1);
-            }
-            // Only mark invalid if the filename itself (not the path) contains spaces
-            if (filename.contains(" ")) {
-                return "JAR filename contains spaces: " + filename;
-            }
-        }
-        
-        // Case 6: Directory instead of file (if path exists and is accessible)
-        if (resolvedPath != null) {
-            try {
-                if (Files.exists(resolvedPath) && Files.isDirectory(resolvedPath)) {
-                    return "Path is a directory, not a file";
-                }
-            } catch (Exception e) {
-                // If we can't determine, don't mark as invalid due to directory check
-                // Let normal file processing handle access issues
-            }
-        }
-        
-        // Extensible: Add more invalid path patterns here as needed
-        // Future patterns could include:
-        // - Invalid characters or formats
-        // - Specific known bad path patterns
-        // - Length restrictions
-        // - etc.
-        
-        return null; // Path is valid
-    }
-    
-    private static void setFileInvalid(Row row, int idxFileExists, int idxFileMod, int idxFileVersion, int idxScanError, String reason) {
-        writeCell(row, idxFileExists, "X");
-        writeCell(row, idxFileMod, "");
-        writeCell(row, idxFileVersion, "");
-        recordScanError(row, idxScanError, reason); // Record specific reason for invalid path
-        // Note: FixedFilename is handled separately in the main processing logic
-    }
 
     private static String generateUniqueID(String hostname, String cve, String originalFilePath, String fixedFilePath) {
         // Use fixed file path if it exists and is not empty, otherwise use original
@@ -1666,4 +1313,93 @@ public class ExcelTool {
 
         return cveData;
     }
+
+    // Method to parse path replacements from config
+    // Supports both comma-separated and multi-line formats
+    private static Map<String, String> parsePathReplacements(String replacementString) {
+        Map<String, String> replacements = new HashMap<String, String>();
+        if (isBlank(replacementString)) {
+            return replacements;
+        }
+
+        // Split by both newlines and commas to support both formats
+        String[] pairs = replacementString.split("[,\n\r]+");
+        for (String pair : pairs) {
+            String trimmedPair = pair.trim();
+            // Skip empty lines and comments
+            if (trimmedPair.isEmpty() || trimmedPair.startsWith("#")) {
+                continue;
+            }
+            if (trimmedPair.contains("=")) {
+                String[] parts = trimmedPair.split("=", 2);
+                if (parts.length == 2) {
+                    String original = parts[0].trim();
+                    String replacement = parts[1].trim();
+                    if (!original.isEmpty() && !replacement.isEmpty()) {
+                        replacements.put(original, replacement);
+                    }
+                }
+            }
+        }
+
+        return replacements;
+    }
+
+    // Method to perform comprehensive path fixing (Pass 1)
+    private static String[] performPathFixing(String rawPath, Map<String, String> pathReplacements, boolean isWindowsPlatform) {
+        if (isBlank(rawPath)) {
+            return new String[]{"", "N"}; // Return empty string as fixed path, not fixed
+        }
+
+        String workingPath = rawPath.trim();
+        boolean wasFixed = false;
+
+
+        // Step 1: Handle "key=" patterns first
+        if (workingPath.contains(" key=")) {
+            int keyIndex = workingPath.indexOf(" key=");
+            workingPath = workingPath.substring(0, keyIndex);
+            wasFixed = true;
+        }
+
+        // Step 2: Apply special path replacements BEFORE space corruption fixing
+        // Use case-insensitive comparison on Windows platforms
+        for (Map.Entry<String, String> entry : pathReplacements.entrySet()) {
+            boolean pathMatches = isWindowsPlatform ?
+                workingPath.equalsIgnoreCase(entry.getKey()) :
+                workingPath.equals(entry.getKey());
+            if (pathMatches) {
+                workingPath = entry.getValue();
+                wasFixed = true;
+                break;
+            }
+        }
+
+        // Step 3: Handle filename space corruption (only if no replacement was applied)
+        if (!wasFixed) {
+            // Find last slash to separate directory from filename
+            int lastSlash = Math.max(workingPath.lastIndexOf('/'), workingPath.lastIndexOf('\\'));
+
+            if (lastSlash != -1) {
+                String dirPath = workingPath.substring(0, lastSlash + 1);
+                String fileName = workingPath.substring(lastSlash + 1);
+
+                // Check if filename contains extension and space
+                if (fileName.contains(".") && fileName.contains(" ")) {
+                    int spaceIndex = fileName.indexOf(' ');
+                    String cleanFileName = fileName.substring(0, spaceIndex);
+                    workingPath = dirPath + cleanFileName;
+                    wasFixed = true;
+                }
+            }
+        }
+
+        // If no changes were made, return original path
+        if (!wasFixed) {
+            workingPath = rawPath;
+        }
+
+        return new String[]{workingPath, wasFixed ? "Y" : "N"};
+    }
+
 }

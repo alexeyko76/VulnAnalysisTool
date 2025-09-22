@@ -1,6 +1,6 @@
 # Java Vulnerability Analysis Tool
 
-**Version 2.0.0**
+**Version 3.0.0**
 
 A comprehensive defensive security tool that processes Excel files to analyze file existence, modification dates, and file versions (JAR and EXE) across different platforms. Features include automatic path corruption detection and fixing, duplicate detection system, CVE information sheet creation with NIST NVD integration, Oracle WebLogic vulnerability detection, and support for both local file analysis and remote Windows file access via UNC paths.
 

@@ -4,23 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Version Information
 
-**Current Version: 2.0.0**
+**Current Version: 3.0.0**
 
 ## Recent Enhancements
 
-**Key improvements implemented in version 2.0.0:**
+**Key improvements implemented in version 3.0.0:**
+- **Streamlined 4-Pass Processing**: Redesigned file processing logic with distinct phases: Path fixing, File operations, Duplicate detection, Invalid path detection
+- **Enhanced Path Replacement System**: Multi-line configuration support with platform-aware case sensitivity for Windows vs Linux
+- **Improved Column Structure**: Replaced FixedFilename with FixedFilePath, added IsFixed and IsInvalidPath columns for better audit trails
+- **Platform-Specific Processing**: Path replacements use row-level platform detection instead of OS detection for accurate processing
 - **CVE Information Sheet Creation**: Comprehensive NIST NVD API integration with detailed CVE data extraction, Weblogic detection, and Oracle security advisory parsing
-- **Weblogic Vulnerability Detection**: Automated identification of Oracle WebLogic Server vulnerabilities using CPE pattern matching from NIST data
-- **Oracle Advisory Extraction**: Proper extraction and formatting of Oracle security advisory URLs from CVE references (fixed escaped URL handling)
 - **Duplicate Detection System**: Configurable duplicate search functionality with UniqueID generation based on hostname, CVE, and file path
-- **Version Display**: Application version displayed on startup for better tracking and support
-- **Enhanced File Version Extraction**: Replaced JarVersion with comprehensive FileVersion column supporting both JAR and EXE files
+- **Enhanced File Version Extraction**: Comprehensive FileVersion column supporting both JAR and EXE files with Bundle-Version fallback
 - **Pure Java PE Parsing**: EXE version extraction using efficient chunk-based binary parsing (no PowerShell dependencies)
-- **Automatic Path Fixing**: Detects and corrects corrupted file paths with trailing garbage data
-- **Dual Column Tracking**: FixedFilename and FixedFileExists columns always populated for complete audit trail
+- **Automatic Path Fixing**: Detects and corrects corrupted file paths with trailing garbage data and space corruption
 - **Split Scan Date Tracking**: Separate LocalScanDate and RemoteScanDate columns for distinct audit trails
 - **Improved UNC Compatibility**: Pure Java implementations work seamlessly with remote Windows file access
-- **Performance Optimization**: Removed external process dependencies for faster execution
+- **Performance Optimization**: Removed external process dependencies and streamlined operations for faster execution
 
 ## Project Overview
 
@@ -40,14 +40,18 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 
 ## Key Components
 
-### Core Logic (src/main/java/app/ExcelTool.java:45-177)
-- Main processing loop that reads Excel rows and updates file status
+### Core Logic (src/main/java/app/ExcelTool.java:220-300)
+- **4-Pass Processing Architecture**: Streamlined processing with distinct phases for better maintainability
+  - **Pass 1**: Path fixing and special replacements for ALL rows
+  - **Pass 2**: File operations using FixedFilePath for hostname scope
+  - **Pass 3**: Duplicate detection using normalized paths
+  - **Pass 4**: Invalid path detection with pattern matching
 - Required columns validation (exits without saving if missing)
-- Auto-creation of output columns: FileExists, FileModificationDate, FileVersion, ScanError, RemoteScanError, LocalScanDate, RemoteScanDate, FixedFilename, FixedFileExists, UniqueID, Duplicate
-- **Version Display**: Shows application version on startup for tracking and support
-- **Duplicate Detection**: Configurable system to identify duplicate entries based on hostname, CVE, and file path
+- Auto-creation of output columns: FileExists, FileModificationDate, FileVersion, ScanError, RemoteScanError, LocalScanDate, RemoteScanDate, FixedFilePath, IsFixed, IsInvalidPath, UniqueID, Duplicate
+- **Platform-Aware Processing**: Row-level platform detection for accurate path replacement logic
+- **Enhanced Path Fixing**: Handles space corruption, "key=" patterns, and special replacement mappings
+- **Unified Cell Writing**: Streamlined operations with writeCells() function for multiple column updates
 - **Standardized error handling**: Consistent error recording through dedicated helper methods
-- **Code quality improvements**: Reduced duplication via helper methods for common operations
 
 ### Path Resolution (src/main/java/app/ExcelTool.java:267-270)
 - Cross-platform path normalization (converts `\` to `/`)
@@ -62,15 +66,18 @@ This is a single-file Java 8 vulnerability analysis tool that processes Excel fi
 - **Performance**: Pure Java implementation avoids external process overhead and UNC compatibility issues
 - **Error Handling**: Comprehensive error reporting captures file version processing issues in ScanError column
 
-### Path Corruption Detection and Fixing
-- **Automatic Detection**: Identifies corrupted file paths with trailing garbage data, spaces, or invalid patterns
-- **Smart Fixing**: Attempts to fix paths by removing trailing suffixes after the first space in filename
-- **Validation Exceptions**: Recognizes valid paths like "C:\Program Files (x86)" while flagging invalid ones like "C:\Program Files "
-- **Dual Processing**: Always tries original path first, then attempts fixing only if file doesn't exist
+### Path Corruption Detection and Fixing (Pass 1)
+- **3-Step Processing Order**: Optimized sequence for accurate path resolution
+  1. **"key=" Pattern Removal**: Handles `filename.ext key=data` corruption first
+  2. **Special Path Replacements**: Platform-aware mapping before generic fixing
+  3. **Space Corruption Fixing**: Removes trailing garbage only if no replacement applied
+- **Platform-Aware Replacements**: Uses case-insensitive comparison on Windows platforms, case-sensitive on Linux
+- **Properties File Format**: Standard Java properties format with proper backslash escaping
 - **Result Tracking**:
-  - `FixedFilename` column shows the corrected path when fixing was attempted
-  - `FixedFileExists` column shows file existence status of the fixed path
-- **Invalid Path Handling**: Marks truly invalid paths (empty, "N/A", directories) with "X" in FileExists column
+  - `FixedFilePath` column shows the corrected path (always populated)
+  - `IsFixed` column indicates whether path fixing was applied (Y/N)
+- **Intelligent Fallback**: Generic space corruption fixing only applies when specific replacements don't match
+- **Invalid Path Detection**: Separate Pass 4 marks truly invalid paths with `IsInvalidPath` column
 - **Configurable**: Can be enabled/disabled via `invalid.path.detection` setting
 
 ### Remote Windows Access (UNC Support)
@@ -179,11 +186,23 @@ Edit `config.properties` to set:
 - Column names for PlatformName, FilePath, HostName, CVE
 - `platform.windows`: Windows platform values (comma-separated, e.g., "Windows Server 2019, Windows Server 2022")
 - `remote.unc.enabled`: Enable/disable remote Windows UNC access (true/false)
-- `remote.unc.timeout`: UNC access timeout in seconds (default: 7)
+- `remote.unc.timeout`: UNC access timeout in seconds (default: 6)
 - `log.filename`: Log file name (optional) - saves console output to hostname-prefixed file (e.g., `HOSTNAME-excel-tool.log`)
 - `invalid.path.detection`: Enable/disable invalid path pattern validation (true/false, default: true)
-- `duplicate.search.enabled`: Enable/disable duplicate detection system (true/false, default: false)
+- `duplicate.search.enabled`: Enable/disable duplicate detection system (true/false, default: true)
 - `cve.sheet.creation.enabled`: Enable/disable CVE information sheet creation with NIST NVD data (true/false, default: false)
+- `path.replacements`: Special path replacement mappings (standard Java properties format):
+  ```properties
+  # Single replacement
+  path.replacements=D:\\Apps\\Notepad++ otepad++.exe=D:\\Apps\\Notepad++\\Notepad++.exe
+
+  # Multiple replacements (comma-separated)
+  path.replacements=D:\\Apps\\Notepad++ otepad++.exe=D:\\Apps\\Notepad++\\Notepad++.exe,C:\\old\\path\\app.exe=C:\\new\\path\\app.exe
+
+  # With line continuation
+  path.replacements=D:\\Apps\\Notepad++ otepad++.exe=D:\\Apps\\Notepad++\\Notepad++.exe,\
+                    C:\\old\\path\\app.exe=C:\\new\\path\\app.exe
+  ```
 
 ### Dependencies
 
@@ -228,12 +247,16 @@ Key dependencies:
 - **Counter Consistency**: Accurate tracking of processed vs skipped rows across all failure scenarios
 - **Scan Auditing**: LocalScanDate and RemoteScanDate columns record session start timestamp for local and remote hosts respectively (same timestamp for entire scanning session)
 - **Invalid Path Handling**: Extensible system for detecting and marking invalid file paths with "X" in FileExists column
-- **Path Corruption Fixing**: Automatic detection and correction of corrupted file paths with trailing garbage data
+- **Optimized Path Fixing**: 3-step processing order ensures special replacements take precedence over generic space corruption fixing
 - **PE Header Parsing**: Efficient chunk-based binary parsing for EXE version extraction without external dependencies
 - **UNC Compatibility**: Pure Java implementations work seamlessly with remote Windows file access
-- **Dual Column System**: FixedFilename and FixedFileExists columns always populated to show path fixing results
+- **Streamlined Architecture**: 4-pass processing design separates concerns for better maintainability and performance
+- **Enhanced Column System**: FixedFilePath, IsFixed, and IsInvalidPath columns provide comprehensive audit trails
+- **Platform-Aware Logic**: Row-level platform detection enables accurate Windows vs Linux processing
+- **Properties-Based Configuration**: Path replacements use standard Java properties format with proper escaping and platform-specific case sensitivity
+- **Unified Operations**: writeCells() function streamlines multiple column updates and reduces code duplication
+- **Bundle-Version Support**: JAR version extraction includes Implementation-Version and Bundle-Version fallback for OSGi compatibility
 - **Scan Date Separation**: LocalScanDate and RemoteScanDate columns provide separate audit trails for different access methods
 - **Hostname-Prefixed Logging**: Log files automatically include hostname prefix for multi-machine deployments (e.g., `HOSTNAME-excel-tool.log`)
 - **Maintainability**: Consistent patterns and helper methods improve code readability and reduce maintenance overhead
-- **Performance Optimization**: Removed PowerShell dependencies for faster EXE version extraction and better UNC compatibility
-- **Enhanced Workflow**: Try original path first, attempt fixing only if file doesn't exist, extract metadata from existing file
+- **Performance Optimization**: Removed PowerShell dependencies and streamlined processing for faster execution
